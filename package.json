@@ -1,0 +1,65 @@
+{
+  "name": "yanki",
+  "productName": "Yankı",
+  "version": "1.0.0",
+  "description": "Merkezi sunucusuz, eşler arası (P2P) topluluk ve haberleşme uygulaması — metin, ses, görüntü ve 1080p ekran paylaşımı",
+  "main": "main.js",
+  "author": "Yankı",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "start:2": "electron . --profile=ikinci",
+    "test": "node test/p2p.test.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac"
+  },
+  "dependencies": {
+    "hyperswarm": "^4.8.4"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "app.yanki.desktop",
+    "productName": "Yankı",
+    "artifactName": "Yanki-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "mac": {
+      "category": "public.app-category.social-networking",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Sesli sohbet için mikrofon erişimi gerekir.",
+        "NSCameraUsageDescription": "Görüntülü sohbet için kamera erişimi gerekir.",
+        "NSLocalNetworkUsageDescription": "Yerel ağdaki eşleri bulmak için gerekir."
+      }
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Yankı"
+    }
+  }
+}

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: mediastream: data:; frame-src https://www.youtube-nocookie.com https://www.youtube.com; connect-src 'self'; font-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Yankı</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <nav id="rail" aria-label="Sunucular"></nav>
+
+    <aside id="sidebar">
+      <header id="server-header"></header>
+      <div id="channels"></div>
+    </aside>
+
+    <main id="main">
+      <header id="chan-header"></header>
+      <section id="stage" hidden></section>
+      <section id="chat">
+        <div id="messages" tabindex="-1"></div>
+        <div id="typing"></div>
+        <footer id="composer">
+          <div id="reply-bar" hidden></div>
+          <div id="attach-preview"></div>
+          <div class="composer-box">
+            <textarea id="input" rows="1" maxlength="4000" placeholder="Mesaj gönder"></textarea>
+            <div class="composer-tools">
+              <div class="fmt">
+                <button class="tool" data-fmt="**" title="Kalın (Ctrl+B)"></button>
+                <button class="tool" data-fmt="*" title="İtalik (Ctrl+I)"></button>
+                <button class="tool" data-fmt="~~" title="Üstü çizili"></button>
+                <button class="tool" data-fmt="||" title="Spoiler"></button>
+                <button class="tool" data-fmt="`" title="Kod"></button>
+              </div>
+              <div class="actions">
+                <button class="tool" id="btn-attach" title="Resim ekle"></button>
+                <button class="tool" id="btn-emoji" title="Emoji"></button>
+                <button class="tool send" id="btn-send" title="Gönder (Enter)"></button>
+              </div>
+            </div>
+          </div>
+          <input type="file" id="file-input" accept="image/*" multiple hidden>
+        </footer>
+      </section>
+      <section id="empty" hidden></section>
+    </main>
+
+    <aside id="members"></aside>
+
+    <footer id="bottombar"></footer>
+  </div>
+
+  <div id="popup-root"></div>
+  <div id="modal-root"></div>
+  <div id="toast" role="status"></div>
+  <div id="drop-overlay" hidden><div>Resmi bırakarak kanala gönder</div></div>
+
+  <script src="icons.js"></script>
+  <script src="rtc.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
