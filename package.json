@@ -1,10 +1,10 @@
 {
   "name": "yanki",
-  "productName": "Yankı",
-  "version": "1.0.0",
-  "description": "Merkezi sunucusuz, eşler arası (P2P) topluluk ve haberleşme uygulaması — metin, ses, görüntü ve 1080p ekran paylaşımı",
+  "productName": "YANKI",
+  "version": "1.1.0",
+  "description": "YANKI",
   "main": "main.js",
-  "author": "Yankı",
+  "author": "YANKI",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -18,13 +18,13 @@
     "hyperswarm": "^4.8.4"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^43.0.0",
+    "electron-builder": "^26.0.0"
   },
   "build": {
     "appId": "app.yanki.desktop",
-    "productName": "Yankı",
-    "artifactName": "Yanki-${version}-${os}-${arch}.${ext}",
+    "productName": "YANKI",
+    "artifactName": "YANKI-${version}-${os}-${arch}.${ext}",
     "files": [
       "main.js",
       "preload.js",
@@ -38,7 +38,13 @@
     "mac": {
       "category": "public.app-category.social-networking",
       "target": [
-        { "target": "dmg", "arch": ["arm64", "x64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
@@ -47,19 +53,35 @@
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Sesli sohbet için mikrofon erişimi gerekir.",
         "NSCameraUsageDescription": "Görüntülü sohbet için kamera erişimi gerekir.",
-        "NSLocalNetworkUsageDescription": "Yerel ağdaki eşleri bulmak için gerekir."
+        "NSLocalNetworkUsageDescription": "Yerel ağdaki eşleri bulmak için gerekir.",
+        "NSAppleEventsUsageDescription": "Spotify veya Müzik uygulamasında çalan şarkıyı profilinde göstermek için gerekir.",
+        "CFBundleDisplayName": "YANKI"
       }
     },
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] }
-      ]
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "legalTrademarks": "YANKI"
     },
     "nsis": {
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Yankı"
-    }
+      "shortcutName": "YANKI"
+    },
+    "copyright": "Copyright © 2026 YANKI",
+    "executableName": "YANKI"
   }
 }

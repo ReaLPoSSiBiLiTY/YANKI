@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -12 420 124">
+ <defs>
+  <linearGradient id="wg" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="360" y2="100"><stop offset="0" stop-color="#FF4F8B"/><stop offset=".5" stop-color="#9B6BFF"/><stop offset="1" stop-color="#18C8FF"/></linearGradient>
+  <g id="w" fill="none" stroke-width="17" stroke-linecap="round" stroke-linejoin="round">
+   <path d="M0 0 L32 46 L64 0 M32 46 L32 100"/>
+   <path d="M88 100 L121 0 L154 100 M101 66 L141 66"/>
+   <path d="M180 100 L180 0 L238 100 L238 0"/>
+   <path d="M266 0 L266 100 M320 0 L272 54 M290 34 L324 100"/>
+   <path d="M352 0 L352 100"/>
+  </g>
+ </defs>
+ <use href="#w" x="24" stroke="url(#wg)" opacity=".14"/>
+ <use href="#w" x="12" stroke="url(#wg)" opacity=".32"/>
+ <use href="#w" stroke="url(#wg)"/>
+</svg>

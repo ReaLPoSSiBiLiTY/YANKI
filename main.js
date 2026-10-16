@@ -1,19 +1,47 @@
 'use strict'
 const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, Notification, systemPreferences, net, Menu } = require('electron')
 const path = require('path')
+const fs = require('fs')
 const { P2PNode } = require('./src/p2p/node')
+const { ActivityDetector } = require('./src/activity')
+
+const APP_NAME = 'YANKI'
+app.setName(APP_NAME)
+// Müzik botunun kullanıcı etkileşimi olmadan çalabilmesi için
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 // Aynı bilgisayarda test için ikinci profil: npm run start:2  (--profile=ikinci)
 const profileArg = process.argv.find(a => a.startsWith('--profile='))
+const appData = app.getPath('appData')
 if (profileArg) {
-  app.setPath('userData', path.join(app.getPath('appData'), 'Yanki-' + profileArg.split('=')[1].replace(/[^\w-]/g, '')))
-} else if (!app.requestSingleInstanceLock()) {
-  app.quit()
+  app.setPath('userData', path.join(appData, 'YANKI-' + profileArg.split('=')[1].replace(/[^\w-]/g, '')))
+} else {
+  app.setPath('userData', path.join(appData, APP_NAME))
+  migrateOldData()
+  if (!app.requestSingleInstanceLock()) app.quit()
 }
 
-app.setName('Yankı')
+// v1.0 verileri "Yankı" klasöründeydi; kimlik ve sunucular kaybolmasın diye taşı.
+function migrateOldData () {
+  const target = app.getPath('userData')
+  if (fs.existsSync(path.join(target, 'p2p', 'identity.json'))) return
+  for (const old of ['Yankı', 'Yanki', 'yanki']) {
+    const src = path.join(appData, old)
+    if (src === target || !fs.existsSync(path.join(src, 'p2p', 'identity.json'))) continue
+    try {
+      fs.mkdirSync(target, { recursive: true })
+      fs.cpSync(src, target, { recursive: true, force: false, errorOnExist: false, filter: (p) => !/Singleton|lockfile|\.lock$/i.test(p) })
+    } catch (e) { console.error('taşıma', e) }
+    return
+  }
+}
+
+if (process.platform === 'win32') app.setAppUserModelId('app.yanki.desktop')
+
 let win = null
 let node = null
+let activity = null
+let pendingShare = null
 
 function send (ev) {
   if (win && !win.isDestroyed()) win.webContents.send('p2p:event', ev)
@@ -21,13 +49,15 @@ function send (ev) {
 
 function createWindow () {
   win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 980,
-    minHeight: 620,
-    backgroundColor: '#0d1015',
-    title: 'Yankı',
+    width: 1460,
+    height: 920,
+    minWidth: 1000,
+    minHeight: 640,
+    backgroundColor: '#07080d',
+    title: APP_NAME,
+    icon: path.join(__dirname, 'renderer', 'assets', 'icon.png'),
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    trafficLightPosition: { x: 18, y: 18 },
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -48,6 +78,7 @@ function createWindow () {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url)
   })
   win.on('focus', () => send({ type: 'focus' }))
+  win.on('page-title-updated', (e) => e.preventDefault())
 }
 
 function setupSession () {
@@ -55,7 +86,7 @@ function setupSession () {
   ses.setPermissionRequestHandler((_wc, permission, cb) => {
     cb(['media', 'notifications', 'fullscreen', 'clipboard-sanitized-write', 'display-capture'].includes(permission))
   })
-  ses.setPermissionCheckHandler((_wc, permission) => ['media', 'notifications', 'fullscreen', 'clipboard-sanitized-write'].includes(permission))
+  ses.setPermissionCheckHandler((_wc, permission) => ['media', 'notifications', 'fullscreen', 'clipboard-sanitized-write', 'display-capture'].includes(permission))
 
   // YouTube gömmeleri file:// kökenden Referer olmadan "Hata 153" verir; geçerli bir Referer ekle.
   ses.webRequest.onBeforeSendHeaders(
@@ -66,42 +97,88 @@ function setupSession () {
     }
   )
 
-  // getDisplayMedia için yedek: ilk ekranı ver (uygulama kendi seçicisini kullanır)
-  ses.setDisplayMediaRequestHandler(async (_req, cb) => {
-    const sources = await desktopCapturer.getSources({ types: ['screen'] })
-    cb({ video: sources[0] })
+  // Ekran paylaşımı: arayüz kaynağı kendi seçicisinde seçer, burada o kaynak verilir.
+  // Windows'ta sistem sesi "loopback" ile alınır; arayüz restrictOwnAudio kısıtıyla
+  // YANKI'nın kendi çaldığı sesleri (diğer konuşmacılar, müzik botu) yayından çıkarır.
+  ses.setDisplayMediaRequestHandler(async (req, cb) => {
+    const want = pendingShare
+    pendingShare = null
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] })
+      const src = (want && sources.find(s => s.id === want.sourceId)) || sources.find(s => s.id.startsWith('screen'))
+      if (!src) return cb({})
+      const res = { video: src }
+      if (want && want.audio && req.audioRequested && process.platform === 'win32') res.audio = 'loopback'
+      cb(res)
+    } catch {
+      cb({})
+    }
   })
 }
 
 function registerIpc () {
-  ipcMain.handle('p2p:init', () => ({ me: node.me, profile: node.profile, servers: node.listServers(), platform: process.platform, version: app.getVersion() }))
-  ipcMain.handle('p2p:createServer', (_e, name, icon) => node.createServer(name, icon))
-  ipcMain.handle('p2p:join', (_e, code) => {
+  const h = (ch, fn) => ipcMain.handle(ch, (_e, ...a) => fn(...a))
+  h('p2p:init', () => ({ me: node.me, profile: node.profile, servers: node.listServers(), platform: process.platform, version: app.getVersion() }))
+  h('p2p:createServer', (name, icon) => node.createServer(name, icon))
+  h('p2p:join', (code) => {
     const id = String(code || '').trim().replace(/^yanki:\/*/i, '').replace(/[^0-9a-f]/gi, '').toLowerCase()
     return node.joinServer(id)
   })
-  ipcMain.handle('p2p:leave', (_e, id) => node.leaveServer(id))
-  ipcMain.handle('p2p:post', (_e, s, type, data) => node.post(s, type, data))
-  ipcMain.handle('p2p:meta', (_e, s) => node.meta(s))
-  ipcMain.handle('p2p:messages', (_e, s, c, o) => node.messages(s, c, o || {}))
-  ipcMain.handle('p2p:setProfile', (_e, p) => node.setProfile(p))
+  h('p2p:leave', (id) => node.leaveServer(id))
+  h('p2p:post', (s, type, data) => node.post(s, type, data))
+  h('p2p:meta', (s) => node.meta(s))
+  h('p2p:messages', (s, c, o) => node.messages(s, c, o || {}))
+  h('p2p:music', (s, c) => node.music(s, c))
+  h('p2p:setProfile', (p) => node.setProfile(p))
   ipcMain.on('p2p:eph', (_e, s, k, d) => node.sendEph(s, k, d))
   ipcMain.on('p2p:signal', (_e, to, d) => node.sendSignal(to, d))
+  ipcMain.on('p2p:wantPeer', (_e, key, reason, on) => node.wantPeer(key, String(reason), !!on))
 
-  ipcMain.handle('desktop:sources', async () => {
+  // Arkadaşlar ve özel mesajlar
+  h('dm:list', () => node.dmList())
+  h('dm:messages', (key, o) => node.dmMessages(key, o || {}))
+  h('dm:post', (key, type, data) => node.dmPost(key, type, data))
+  h('dm:canDM', (key) => node.canDM(key))
+  h('friend:request', (key) => node.friendRequest(key))
+  h('friend:accept', (key) => node.friendAccept(key))
+  h('friend:remove', (key) => node.friendRemove(key))
+  h('friend:status', (key) => node.friendStatus(key))
+  h('friend:block', (key) => node.block(key))
+  h('friend:unblock', (key) => node.unblock(key))
+  h('friend:blocked', () => node.blockedList())
+  ipcMain.on('dm:typing', (_e, key) => node.dmTyping(key))
+
+  // Etkinlik
+  h('activity:config', (cfg) => { activity.configure(cfg || {}); return activity.current })
+  h('activity:current', () => activity.current)
+  h('activity:all', () => node.activities())
+
+  h('desktop:sources', async () => {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 384, height: 216 }, fetchWindowIcons: true })
     return sources
-      .filter(s => !s.name.startsWith('Yankı'))
+      .filter(s => !/^YANKI$/i.test(s.name))
       .map(s => ({ id: s.id, name: s.name, kind: s.id.startsWith('screen') ? 'screen' : 'window', thumb: s.thumbnail.isEmpty() ? null : s.thumbnail.toDataURL(), icon: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.toDataURL() : null }))
   })
+  h('screen:prepare', (sourceId, audio) => { pendingShare = { sourceId: String(sourceId), audio: !!audio } })
 
-  ipcMain.handle('media:access', async (_e, kind) => {
+  h('media:access', async (kind) => {
     if (process.platform !== 'darwin') return true
     if (kind === 'screen') return systemPreferences.getMediaAccessStatus('screen') === 'granted'
     try { return await systemPreferences.askForMediaAccess(kind === 'camera' ? 'camera' : 'microphone') } catch { return false }
   })
 
-  ipcMain.handle('link:preview', (_e, url) => linkPreview(url))
+  h('link:preview', (url) => linkPreview(url))
+  h('yt:meta', (id) => ytMeta(id))
+
+  // Tema: kullanıcının yüklediği arka plan resmi uygulama klasöründe saklanır
+  const themeFile = () => path.join(app.getPath('userData'), 'theme-custom.bin')
+  h('theme:saveImage', (dataUrl) => {
+    if (dataUrl === null) { try { fs.rmSync(themeFile(), { force: true }) } catch {} return true }
+    if (typeof dataUrl !== 'string' || dataUrl.length > 14e6 || !/^data:image\/(png|jpeg|webp|gif);base64,/.test(dataUrl)) return false
+    fs.writeFileSync(themeFile(), dataUrl)
+    return true
+  })
+  h('theme:loadImage', () => { try { return fs.readFileSync(themeFile(), 'utf8') } catch { return null } })
 
   ipcMain.on('app:notify', (_e, title, body) => {
     if (!Notification.isSupported()) return
@@ -116,9 +193,40 @@ function registerIpc () {
   ipcMain.on('app:open', (_e, url) => { if (/^https?:\/\//i.test(url)) shell.openExternal(url) })
 }
 
+// ---------- YouTube bilgisi (müzik botu için başlık + süre) ----------
+const ytCache = new Map()
+async function ytMeta (id) {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{11}$/.test(id)) return null
+  if (ytCache.has(id)) return ytCache.get(id)
+  let title = ''
+  let duration = 0
+  const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36', 'Accept-Language': 'tr,en;q=0.8', Cookie: 'SOCS=CAI; CONSENT=YES+1' }
+  const timed = (url) => {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 8000)
+    return net.fetch(url, { headers, signal: ctrl.signal }).finally(() => clearTimeout(t))
+  }
+  try {
+    const r = await timed(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent('https://www.youtube.com/watch?v=' + id)}`)
+    if (r.ok) title = String((await r.json()).title || '')
+  } catch {}
+  try {
+    const r = await timed(`https://www.youtube.com/watch?v=${id}&hl=tr`)
+    const html = (await r.text()).slice(0, 4_000_000)
+    const m = html.match(/"lengthSeconds":"(\d+)"/)
+    if (m) duration = parseInt(m[1], 10)
+    if (!title) title = decode(html.match(/<meta name="title" content="([^"]*)"/)?.[1] || '')
+  } catch {}
+  const out = { id, title: title || 'YouTube videosu', duration }
+  ytCache.set(id, out)
+  return out
+}
+
 // ---------- Bağlantı önizleme (Open Graph) ----------
 const previewCache = new Map()
-const decode = (s) => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&#x27;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n))
+function decode (s) {
+  return s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&#x27;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n))
+}
 
 async function linkPreview (url) {
   if (typeof url !== 'string' || !/^https?:\/\//i.test(url) || url.length > 2000) return null
@@ -127,7 +235,7 @@ async function linkPreview (url) {
   const timer = setTimeout(() => ctrl.abort(), 7000)
   let result = null
   try {
-    const res = await net.fetch(url, { signal: ctrl.signal, redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; YankiBot/1.0; +https://yanki.app)', 'Accept-Language': 'tr,en;q=0.8' } })
+    const res = await net.fetch(url, { signal: ctrl.signal, redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; YankiBot/1.1; +https://yanki.app)', 'Accept-Language': 'tr,en;q=0.8' } })
     const ct = res.headers.get('content-type') || ''
     if (/^image\//.test(ct)) {
       result = { kind: 'image', url }
@@ -181,9 +289,20 @@ app.whenReady().then(async () => {
   node.on('eph', e => send({ type: 'eph', ...e }))
   node.on('signal', e => send({ type: 'signal', ...e }))
   node.on('servers', servers => send({ type: 'servers', servers }))
+  node.on('dm', e => send({ type: 'dm', ...e }))
+  node.on('friends', () => send({ type: 'friends' }))
+  node.on('activity', e => send({ type: 'activity', ...e }))
+  node.on('dmtyping', e => send({ type: 'dmtyping', ...e }))
   node.on('error', e => console.error('[p2p]', e))
+
+  activity = new ActivityDetector(app, (act) => {
+    node.setActivity(act)
+    send({ type: 'activity', from: node.me, act })
+  })
+
   registerIpc()
   createWindow()
+  activity.start()
 
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
@@ -201,6 +320,7 @@ app.on('before-quit', async (e) => {
   if (quitting || !node) return
   e.preventDefault()
   quitting = true
+  activity?.stop()
   try { await Promise.race([node.destroy(), new Promise(r => setTimeout(r, 1500))]) } catch {}
   app.quit()
 })

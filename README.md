@@ -1,110 +1,100 @@
-# Yankı
+# YANKI
 
 Merkezi sunucusuz, eşler arası (P2P) topluluk ve haberleşme uygulaması. Windows ve macOS için.
 
-Discord benzeri bir deneyim sunar: sunucular, kategoriler, metin ve ses kanalları, profiller. Ancak hiçbir veri bir şirketin sunucusunda durmaz. Topluluk, üyelerinin bilgisayarlarında yaşar ve üyeler birbirine doğrudan, şifreli bağlantılarla bağlanır.
+Sunucular, kanallar, sesli ve görüntülü sohbet, 1080p ekran paylaşımı, arkadaşlar, özel mesajlar ve botlar sunar. Hiçbir veri bir şirketin sunucusunda durmaz: topluluk, üyelerinin bilgisayarlarında yaşar ve üyeler birbirine doğrudan, şifreli bağlantılarla bağlanır.
 
-## Özellikler
+## v1.1'de yenilikler
 
-**Sunucu ve kanallar**
-- Tek sunucu içinde kategoriler, metin kanalları (`#genel`) ve ses kanalları (`🔊 Sesli Sohbet`)
-- Kanal konusu, kullanıcı sınırı, kategori sıralama, daraltma
-- Sunucu simgesi, bannerı ve açıklaması
-- Davet kodu ile katılım (`yanki://…`)
-- Roller: Sahip, Yönetici, Üye. Atma, yasaklama, yasak kaldırma
-
-**Mesajlaşma**
-- Markdown: **kalın**, *italik*, ~~üstü çizili~~, `kod`, kod blokları, ||spoiler||, > alıntı
-- Resim paylaşımı: dosya seçme, yapıştırma (Ctrl+V), sürükle-bırak (otomatik küçültme, GIF korunur)
-- YouTube bağlantıları tıkla-oynat şeklinde gömülür. Diğer bağlantılar için başlık ve görsel önizlemesi
-- Yanıtlama, düzenleme (↑ tuşu son mesajı düzenler), silme, emoji tepkileri, sabitleme
-- @bahsetme, "yazıyor…" göstergesi, okunmamış işaretleri, masaüstü bildirimleri
-- Kanal içi arama, Ctrl/⌘+K ile hızlı kanal geçişi
-
-**Ses, görüntü ve ekran**
-- Sesli sohbet: gürültü bastırma, yankı engelleme, konuşma göstergesi, kişi başı ses düzeyi
-- Kamera (720p)
-- Ekran veya tek pencere paylaşımı: **1080p 30/60 FPS** (720p seçeneği de var). Windows'ta sistem sesi de paylaşılabilir
-- Sahne görünümü: ızgara, odaklama, tam ekran
-- Sustur/sağırlaştır kısayolları: Ctrl/⌘+Shift+M ve Ctrl/⌘+Shift+D
-
-**Profil**
-- Görünen ad, avatar, banner, biyografi (markdown), durum mesajı, zamirler, profil rengi
-- Profil değişiklikleri tüm sunuculara anında yayılır
+- **Yeni görsel kimlik:** Yeni logo ve uygulama simgesi; yüzen cam paneller, konuşurken avatardan yayılan yankı halkaları ve sahnede yüzen kontrol çubuğu.
+- **Temalar:** 10 hazır tema (6'sı oyun temalı, YANKI için kodla üretilmiş özgün resimler).
+  - Kendi resmini yükleyebilirsin; resminden otomatik renk paleti önerilir.
+  - Karartma, bulanıklık ve panel saydamlığı ayarlanabilir.
+- **Hareketli GIF:** Avatar, banner ve sunucu simgesi GIF olabilir ve uygulamada hareket eder.
+- **Arkadaşlar ve özel mesajlar:**
+  - Arkadaşlık isteği gönder, kabul et ya da reddet; engelleme de var.
+  - Özel mesajlar yalnızca iki kişi arasında gider; üçüncü eşlere hiç gönderilmez.
+  - Ortak sunucu gerekmez; arkadaş koduyla eklenir.
+- **Botlar:** Yöneticiler botları açıp istedikleri kanallara ekler.
+  - **Zar** (`/zar 2d6+1`): Sonuç herkes için aynıdır.
+  - **Anket** (`/anket Soru | A | B`)
+  - **Karşılama:** Yeni üyeleri seçilen kanalda karşılar.
+  - **Müzik Çalar** (`/çal <YouTube>`, `/geç`, `/dur`): Ses kanalındaki herkes aynı şarkıyı aynı anda dinler; kuyruk desteği var.
+- **Etkinlik:** Oynadığın oyun ("Valheim oynuyor") ya da Spotify / Apple Music'te çalan şarkı ("Sanatçı - Şarkı dinliyor"), uygulamanın kendi simgesiyle avatarında ve adının altında görünür.
+  - Steam, Epic, GOG ve Riot oyunları klasöründen otomatik tanınır.
+  - Tanınmayan oyunları kendin ekleyebilirsin.
+- **Yankısız ekran paylaşımı:** Sistem sesi paylaşılırken YANKI'nın kendi çaldığı sesler (diğer konuşmacılar, müzik botu) yayından çıkarılır.
+- **Daha sağlam ses bağlantısı:**
+  - Çıkıp hemen geri girenlerde eski bağlantı artık takılmıyor.
+  - Bağlanamayan eşler önce otomatik onarılıyor, gerekirse bağlantı sıfırdan kuruluyor.
+- **Susturma göstergesi:** Hem mikrofon hem kulaklık kapalıysa iki simge birden görünür.
+- **Ad:** Uygulama Görev Yöneticisi'nde ve macOS'ta "YANKI" olarak görünür.
+  - v1.0 verileri (kimlik, sunucular) ilk açılışta otomatik taşınır.
 
 ## Kurulum ve çalıştırma
 
-Gereksinim: [Node.js 20+](https://nodejs.org)
+Gereksinim: [Node.js 22+](https://nodejs.org)
 
 ```bash
 npm install
 npm start
+npm run start:2   # aynı bilgisayarda ikinci bir kullanıcıyla denemek için
 ```
-
-Aynı bilgisayarda ikinci bir kullanıcıyla denemek için ikinci bir terminalde:
-
-```bash
-npm run start:2
-```
-
-Birinci pencerede bir sunucu oluşturun. Sunucu menüsünden **Davet kodunu kopyala** deyin ve ikinci penceredeki **+ › Davet koduyla katıl** alanına yapıştırın.
 
 ## Kurulum dosyası üretme
 
 ```bash
-npm run dist:win   # Windows'ta → dist/Yanki-1.0.0-win-x64.exe
-npm run dist:mac   # macOS'ta  → dist/Yanki-1.0.0-mac-arm64.dmg ve x64
+npm run dist:win   # Windows'ta → dist/YANKI-1.1.0-win-x64.exe ve kurulumsuz .zip
+npm run dist:mac   # macOS'ta  → dist/YANKI-1.1.0-mac-arm64.dmg ve mac-x64.dmg
 ```
 
-Her platformun paketi kendi işletim sisteminde derlenmelidir. İki platform için birden derlemenin en kolay yolu, projeyi GitHub'a yükleyip `.github/workflows/build.yml` iş akışını çalıştırmaktır (Actions › Derle › Run workflow).
-
-**macOS notları**
-- İmzasız derlemeyi ilk açışta sağ tık › Aç ile başlatın. Dağıtım için Apple Developer sertifikasıyla imzalayıp notarize edin.
-- İlk ekran paylaşımında *Sistem Ayarları › Gizlilik ve Güvenlik › Ekran Kaydı* altından Yankı'ya izin verin ve uygulamayı yeniden başlatın.
+İki platformu birden derlemek için projeyi GitHub'a yükle ve `v1.1.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derleyip Releases sayfasında yayınlar.
 
 ## Nasıl çalışır
 
-```
-┌──────────┐   Hyperswarm DHT (keşif + NAT delme)   ┌──────────┐
-│ Kullanıcı│◄──────────────────────────────────────►│ Kullanıcı│
-│    A     │   Noise ile şifreli eş bağlantısı      │    B     │
-│          │   • imzalı olay günlüğü eşitleme       │          │
-│          │   • geçici sinyaller (ses, yazıyor)    │          │
-│          │   • WebRTC sinyalleşmesi               │          │
-│          │◄══════ WebRTC (DTLS-SRTP) ════════════►│          │
-└──────────┘   ses / kamera / 1080p ekran           └──────────┘
-```
+- **Kimlik:** Bilgisayarda üretilen bir ed25519 anahtarıdır; hesap, e-posta ya da şifre yoktur. Açık anahtar aynı zamanda arkadaş kodudur (`yanki://arkadas/…`).
+- **Keşif:** Her sunucu, Hyperswarm DHT'de kendine ait bir konuya katılır. Ayrıca her kullanıcıya açık anahtarıyla doğrudan ulaşılabilir; arkadaşlık istekleri böyle iletilir.
+- **Veri:** Sunucudaki her işlem, yazarınca imzalanan değişmez bir kayıttır. Durum bu kayıtlardan aynı kurallarla hesaplandığı için herkes aynı sonucu görür ve yetkisiz işlemler her eşte yok sayılır. Eski profil kayıtları (örneğin büyük GIF'ler) budanır, böylece günlük şişmez.
+- **Özel alan:** Her kullanıcı çifti için yalnızca o ikisi arasında eşitlenen ayrı bir kayıt deposu vardır.
+- **Botlar:** Sürekli çalışan bir bot sunucusu yoktur; botların davranışı herkesin uygulamasında aynı kurallarla hesaplanır.
+  - Zar sonucu mesajın kimliğinden türetilir.
+  - Müzik kuyruğunun zamanlaması kayıtlardan ve şarkı sürelerinden hesaplanır; her dinleyici YouTube'dan aynı saniyeden çalar.
+- **Ses ve görüntü:** WebRTC mesh topolojisi kullanılır.
+  - Her katılış yeni bir oturum kimliği alır.
+  - Erken gelen ICE adayları tamponlanır.
+  - Takılan bağlantılar 10 saniyede onarılmaya çalışılır, olmazsa 22 saniyede sıfırdan kurulur.
 
-- **Kimlik.** İlk açılışta bilgisayarda bir ed25519 anahtar çifti üretilir. Hesap, e-posta ya da şifre yoktur. Açık anahtar kimliğinizdir.
-- **Keşif.** Her sunucu, kimliğinden türetilen bir konu (topic) ile Hyperswarm DHT'sine katılır. Aynı konudaki eşler birbirini bulur ve UDP hole-punching ile doğrudan bağlanır.
-- **Veri.** Sunucudaki her şey (kanal oluşturma, mesaj, profil, rol, yasak) yazarınca imzalanan değişmez bir *op* olarak kaydedilir. Eşler bağlandığında elindeki op kimliklerini karşılaştırır ve eksikleri gönderir. Her üye, sunucunun tam bir kopyasını tutar. Durum, op'lardan deterministik olarak hesaplanır. Bu yüzden herkes aynı sonucu görür ve yetkisiz işlemler (örneğin yönetici olmayanın kanal oluşturması) her eşte yok sayılır.
-- **Aktarma.** İki eş doğrudan bağlanamazsa, ikisine de bağlı üçüncü bir eş mesajları ve WebRTC sinyallerini iletir.
-- **Gizlilik.** Eşler tanışırken sunucu kimliklerini çifte özgü özetlerle gönderir. Böylece karşı taraf, kendisinin üyesi olmadığı sunucuları öğrenemez.
-- **Ses ve görüntü.** WebRTC mesh topolojisi kullanılır. NAT adresini öğrenmek için yalnızca halka açık STUN sunucuları kullanılır, içerik bunlardan geçmez. Çok katı ağlarda Ayarlar › Ağ altından kendi TURN sunucunuz eklenebilir.
+### Bilinen sınırlar
 
-### Sınırlar (mimarinin doğası gereği)
-
-- Bir sunucunun verisi ancak en az bir üyesi çevrimiçiyken yeni katılanlara aktarılabilir. Hiç kimse çevrimiçi değilse, gönderilen mesaj ilk kim gelirse ona eşitlenir.
-- Mesh topolojide her izleyici için ayrı bir akış yüklenir. 1080p60 ekran paylaşımı izleyici başına yaklaşık 9 Mbps yükleme ister. Ses kanallarının ~8–10 kişiye kadar rahat çalışması beklenir.
-- Silme işlemleri "işaretleme" olarak çalışır. Arayüzden kalkar ama eşlerin diskindeki imzalı günlükte kalır.
-- Sunucu sahipliği devredilemez.
+- Bir sunucunun ya da özel sohbetin yeni verisi, karşı tarafın uygulaması açıkken eşitlenir.
+- Mesh topolojide her izleyiciye ayrı akış gider. 1080p60 izleyici başına yaklaşık 9 Mbps yükleme ister.
+- Yankısız sistem sesi Windows'ta, Chromium'un `restrictOwnAudio` özelliğine dayanır. Sistem bunu desteklemezse ekran sessiz paylaşılır; istersen Ayarlar › Ekran Paylaşımı'ndan yine de sesli paylaşabilirsin. macOS'ta sistem sesi paylaşımı yoktur.
+- Müzik Çalar YouTube gömme oynatıcısını kullanır. Sahibinin gömmeye kapattığı videolar çalmaz.
+- Zar sonucu deterministiktir. Kendi uygulamasını değiştiren biri, istediği sonucu verecek bir mesaj kimliği arayabilir; bu sistem arkadaş ortamı için tasarlandı.
+- Uygulama imzasız olduğu için ilk açılışta Windows ve macOS uyarı verebilir.
 
 ## Proje yapısı
 
 ```
-main.js              Electron ana süreç: pencere, IPC, ekran kaynakları, bağlantı önizleme, bildirimler
-preload.js           Arayüze güvenli API köprüsü (contextIsolation + sandbox)
-src/p2p/identity.js  ed25519 kimlik (Node yerleşik kripto) + Hyperswarm anahtarı
-src/p2p/node.js      P2P düğümü: eş keşfi, op günlüğü, eşitleme, geçici mesajlar, sinyal aktarma
-src/p2p/state.js     Op günlüğünden sunucu durumunu türetme + yetki kuralları
-renderer/            Arayüz (bağımlılıksız HTML/CSS/JS)
-  app.js             Kanallar, mesajlar, profiller, ayarlar, modallar
-  rtc.js             WebRTC sesli/görüntülü sohbet ve ekran paylaşımı
-test/p2p.test.js     P2P çekirdeğinin çok düğümlü testi (npm test)
+main.js              Ana süreç: pencere, IPC, ekran paylaşımı, etkinlik, YouTube bilgisi, veri taşıma
+preload.js           Arayüze güvenli API köprüsü
+src/p2p/node.js      P2P düğümü: keşif, eşitleme, arkadaşlık/özel mesaj, sinyal aktarma, etkinlik
+src/p2p/state.js     Kayıtlardan durum: sunucu, botlar (zar/anket/müzik), özel alan
+src/activity.js      Oyun ve Spotify/Apple Music algılama
+renderer/
+  core.js            Ortak durum, avatarlar, modallar, resim/GIF yükleme
+  app.js             Kanallar, mesajlar, sahne, ayarlar
+  social.js          Arkadaşlar ve özel mesajlar
+  bots.js            Bot kartları, komutlar, Müzik Çalar
+  rtc.js             WebRTC ses/görüntü/ekran
+  themes.js          Temalar ve resimden palet çıkarma
+  themes/            Tema resimleri (özgün, telifsiz)
+  assets/            Logo ve simge
+test/p2p.test.js     Çok kullanıcılı çekirdek testi (npm test)
 ```
 
-Kullanıcı verileri şurada tutulur:
-- Windows: `%APPDATA%\Yankı\p2p`
-- macOS: `~/Library/Application Support/Yankı/p2p`
+Veriler şu klasörlerde tutulur:
+- Windows: `%APPDATA%\YANKI`
+- macOS: `~/Library/Application Support/YANKI`
 
-`identity.json` dosyası gizli anahtarınızdır. Yedeklerseniz kimliğinizi başka bilgisayara taşıyabilirsiniz.
+`p2p/identity.json` gizli anahtarındır; yedeklersen kimliğini başka bilgisayara taşıyabilirsin.
