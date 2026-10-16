@@ -7,6 +7,7 @@ const os = require('os')
 const path = require('path')
 const { EventEmitter } = require('events')
 const { P2PNode } = require('../src/p2p/node')
+const { musicState, rollDice } = require('../src/p2p/state')
 
 class FakeConn extends EventEmitter {
   constructor (remoteKey) { super(); this.remotePublicKey = remoteKey; this.destroyed = false; this.other = null }
@@ -28,7 +29,11 @@ class FakeNet {
       const sw = new EventEmitter()
       sw.keyPair = keyPair
       sw.topics = new Set()
+      sw.wantKeys = new Set()
       sw.join = (topic) => { sw.topics.add(topic.toString('hex')); net.connectAll() }
+      sw.joinPeer = (key) => { sw.wantKeys.add(key.toString('hex')); net.connectAll() }
+      sw.leavePeer = (key) => { sw.wantKeys.delete(key.toString('hex')) }
+      sw.listen = async () => {}
       sw.leave = (topic) => { sw.topics.delete(topic.toString('hex')) }
       sw.destroy = async () => {}
       net.swarms.push(sw)
@@ -40,7 +45,8 @@ class FakeNet {
       if (a === b) continue
       const k = [a.keyPair.publicKey.toString('hex'), b.keyPair.publicKey.toString('hex')].sort().join()
       if (this.links.has(k) || this.blocked.has(k)) continue
-      if (![...a.topics].some(t => b.topics.has(t))) continue
+      const ka = a.keyPair.publicKey.toString('hex'); const kb = b.keyPair.publicKey.toString('hex')
+      if (![...a.topics].some(t => b.topics.has(t)) && !a.wantKeys.has(kb) && !b.wantKeys.has(ka)) continue
       this.links.add(k)
       const ca = new FakeConn(b.keyPair.publicKey)
       const cb = new FakeConn(a.keyPair.publicKey)
@@ -104,7 +110,7 @@ async function main () {
   await until(() => C.meta(sid).channels.some(c => c.name === 'duyurular'), 'yönetici kanalı')
 
   // Düzenleme, tepki, silme
-  const mid = A.messages(sid, genel)[0].id
+  const mid = A.messages(sid, genel).find(m => m.author === A.me).id
   A.post(sid, 'message-edit', { target: mid, text: 'Düzenlendi' })
   C.post(sid, 'reaction', { target: mid, emoji: '👍', on: true })
   C.post(sid, 'message-edit', { target: mid, text: 'başkasının mesajı' }) // reddedilmeli
@@ -130,6 +136,79 @@ async function main () {
   A.sendSignal(C.me, { desc: { type: 'offer', sdp: 'v=0' } })
   await until(() => gotSig && gotSig.from === A.me, 'aktarılmış sinyal')
 
+
+  // ---------- v1.1: profil budama ----------
+  B.setProfile({ name: 'burak', bio: 'v2' })
+  B.setProfile({ name: 'burak', bio: 'v3' })
+  await until(() => A.meta(sid).members.find(m => m.key === B.me)?.profile?.bio === 'v3', 'profil güncellemesi')
+  const bStore = B.servers.get(sid)
+  const myProfiles = [...bStore.ops.values()].filter(o => o.type === 'profile' && o.author === B.me)
+  assert.strictEqual(myProfiles.length, 1, 'eski profil kayıtları budanmalı')
+  assert.ok(bStore.pruned.size >= 2)
+  const fileLines = fs.readFileSync(bStore.file, 'utf8').split('\n').filter(Boolean).length
+  assert.ok(fileLines > bStore.ops.size, 'dosya henüz sıkıştırılmadı (yeniden başlatmada sıkışır)')
+
+  // ---------- v1.1: botlar ----------
+  A.post(sid, 'bot-config', { bot: 'poll', enabled: true, channels: [genel] })
+  await wait(100)
+  const diceId = B.post(sid, 'message', { channel: genel, text: '/zar 3d6+2' })
+  const pollId = B.post(sid, 'message', { channel: genel, text: '/anket Akşam ne oynayalım? | Valheim | CS2 | ETS2' })
+  await until(() => A.messages(sid, genel).some(m => m.id === pollId), 'bot mesajları')
+  const dA = A.messages(sid, genel).find(m => m.id === diceId)
+  const dB = B.messages(sid, genel).find(m => m.id === diceId)
+  assert.ok(dA.bot && dA.bot.id === 'dice' && dA.bot.rolls.length === 3)
+  assert.deepStrictEqual(dA.bot, dB.bot, 'zar sonucu her eşte aynı olmalı')
+  assert.strictEqual(dA.bot.total, dA.bot.rolls.reduce((x, y) => x + y, 0) + 2)
+  A.post(sid, 'poll-vote', { target: pollId, option: 1 })
+  B.post(sid, 'poll-vote', { target: pollId, option: 1 })
+  B.post(sid, 'poll-vote', { target: pollId, option: 2 }) // oyunu değiştirdi
+  await until(() => { const p = A.messages(sid, genel).find(m => m.id === pollId).poll; return p.total === 2 && p.counts[2] === 1 }, 'anket oyları')
+  assert.deepStrictEqual(A.messages(sid, genel).find(m => m.id === pollId).poll.counts, [0, 1, 1])
+  assert.strictEqual(rollDice('x', '/zar abc').error.length > 0, true)
+
+  // Müzik kuyruğu zaman çizelgesi
+  const v = (id, d) => ({ id, title: id, duration: d })
+  const evs = [
+    { id: 'a', ts: 1000, author: 'u', action: 'add', video: v('aaaaaaaaaaa', 10) },
+    { id: 'b', ts: 2000, author: 'u', action: 'add', video: v('bbbbbbbbbbb', 20) },
+    { id: 'c', ts: 3000, author: 'u', action: 'add', video: v('ccccccccccc', 5) }
+  ]
+  assert.strictEqual(musicState(evs, 5000).playing.id, 'a')
+  assert.strictEqual(musicState(evs, 12000).playing.id, 'b')
+  assert.strictEqual(musicState(evs, 12000).playing.startedAt, 11000)
+  assert.strictEqual(musicState(evs, 31500).playing.id, 'c')
+  assert.strictEqual(musicState(evs, 40000).playing, null)
+  assert.strictEqual(musicState([...evs, { id: 's', ts: 4000, action: 'skip', target: 'a' }], 4500).playing.startedAt, 4000)
+  const sesKanal = A.meta(sid).channels.find(c => c.kind === 'voice' && c.name === 'Sesli Sohbet').id
+  B.post(sid, 'music', { channel: sesKanal, action: 'add', video: { id: 'dQw4w9WgXcQ', title: 'Şarkı', duration: 200 } })
+  await until(() => A.music(sid, sesKanal).playing?.video.title === 'Şarkı', 'müzik eşitleme')
+  assert.strictEqual(A.meta(sid).channels.find(c => c.id === sesKanal).music.title, 'Şarkı')
+
+  // ---------- v1.1: arkadaşlık ve özel mesaj ----------
+  // D hiçbir ortak sunucusu olmayan yeni bir kullanıcı; A'yı açık anahtarıyla ekler
+  const D = await mk('deniz')
+  assert.throws(() => D.dmPost(A.me, 'dm', { text: 'selam' }), /arkadaş/)
+  D.friendRequest(A.me)
+  await until(() => A.friendStatus(D.me) === 'incoming', 'arkadaşlık isteği ulaştı')
+  assert.strictEqual(D.friendStatus(A.me), 'outgoing')
+  assert.strictEqual(A.dmList().find(x => x.key === D.me).profile.name, 'deniz')
+  A.friendAccept(D.me)
+  await until(() => D.friendStatus(A.me) === 'friends', 'arkadaşlık kabul edildi')
+  D.dmPost(A.me, 'dm', { text: 'Selam! Bu özel bir mesaj' })
+  A.dmPost(D.me, 'dm', { text: 'Aleyküm selam' })
+  await until(() => A.dmMessages(D.me).length === 2 && D.dmMessages(A.me).length === 2, 'özel mesajlar')
+  // Özel mesajlar üçüncü kişilere gitmez
+  assert.ok(!B.dms.has(D.me) && !B.dms.has(A.me))
+  // Etkinlik arkadaşa doğrudan iletilir
+  let gotAct = null
+  D.on('activity', e => { if (e.from === A.me && e.act) gotAct = e.act })
+  A.setActivity({ type: 'game', name: 'Valheim', since: Date.now() })
+  await until(() => gotAct && gotAct.name === 'Valheim', 'etkinlik')
+  // Arkadaşlıktan çıkarma
+  D.friendRemove(A.me)
+  await until(() => A.friendStatus(D.me) === 'none', 'arkadaşlıktan çıkarma')
+  assert.throws(() => D.dmPost(A.me, 'dm', { text: 'tekrar' }), /arkadaş/i)
+
   // Yasaklama
   A.post(sid, 'ban', { user: C.me })
   await until(() => B.meta(sid).members.length === 2 && B.meta(sid).banned.length === 1, 'ban')
@@ -142,8 +221,16 @@ async function main () {
   const A2 = new P2PNode(path.join(root, 'ayse'), { swarmFactory: net.factory() })
   await A2.start()
   assert.strictEqual(A2.me, A.me)
-  assert.strictEqual(A2.messages(sid, genel).length, 2)
+  assert.strictEqual(A2.messages(sid, genel).length, 4)
   assert.strictEqual(A2.meta(sid).name, 'VAULT')
+  assert.strictEqual(A2.dmMessages(D.me).length, 2, 'özel mesajlar diskte kalıcı')
+  // Budanan profil kayıtları yeniden başlatmada dosyadan atılır
+  await B.destroy()
+  const B2 = new P2PNode(path.join(root, 'burak'), { swarmFactory: net.factory() })
+  await B2.start()
+  const lines2 = fs.readFileSync(B2.servers.get(sid).file, 'utf8').split('\n').filter(Boolean).length
+  assert.strictEqual(lines2, B2.servers.get(sid).ops.size)
+  assert.strictEqual(B2.meta(sid).members.find(m => m.key === B2.me).profile.bio, 'v3')
 
   console.log('✓ Tüm P2P testleri geçti')
   process.exit(0)

@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: npm install
       - run: npm test
       - name: Paketle
@@ -29,7 +29,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Yanki-Windows
-          path: dist/*.exe
+          path: |
+            dist/*.exe
+            dist/*.zip
 
   mac:
     name: macOS (.dmg)
@@ -38,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: npm install
       - run: npm test
       - name: Paketle
@@ -62,11 +64,12 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          name: Yankı ${{ github.ref_name }}
+          name: YANKI ${{ github.ref_name }}
           files: out/*
           body: |
             ## İndir
-            - **Windows:** `.exe` dosyasını indirip çalıştır. "Windows bilgisayarınızı korudu" uyarısında *Ek bilgi › Yine de çalıştır*.
+            - **Windows (kurulum):** `.exe` dosyasını indirip çalıştır. "Windows bilgisayarınızı korudu" uyarısında *Ek bilgi › Yine de çalıştır*.
+            - **Windows (kurulumsuz):** `win-x64.zip` dosyasını bir klasöre çıkarıp içindeki `YANKI.exe` ile başlat. Antivirüs kurulum dosyasını engellerse bunu kullan.
             - **macOS (M1/M2/M3/M4):** `mac-arm64.dmg` dosyasını indir.
             - **macOS (Intel):** `mac-x64.dmg` dosyasını indir.
               İlk açılışta: *Sistem Ayarları › Gizlilik ve Güvenlik › Yine de Aç*.

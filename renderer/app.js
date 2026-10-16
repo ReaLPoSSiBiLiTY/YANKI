@@ -1,125 +1,23 @@
 'use strict'
-/* global icon, Voice, SCREEN_QUALITY */
-const api = window.yanki
-
-// =====================================================================
-// Yardımcılar
-// =====================================================================
-const $ = (s, r = document) => r.querySelector(s)
-const $$ = (s, r = document) => [...r.querySelectorAll(s)]
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild }
-const SAFE_IMG = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/
-const safeImg = (s) => (typeof s === 'string' && SAFE_IMG.test(s) ? s : null)
-const load = (k, d) => { try { const v = JSON.parse(localStorage.getItem('yanki.' + k)); return v ?? d } catch { return d } }
-const save = (k, v) => { try { localStorage.setItem('yanki.' + k, JSON.stringify(v)) } catch {} }
-const debounce = (fn, ms) => { const timers = new Map(); return (key, ...a) => { clearTimeout(timers.get(key)); timers.set(key, setTimeout(() => { timers.delete(key); fn(key, ...a) }, ms)) } }
-
-function hashColor (key) {
-  let h = 0
-  for (let i = 0; i < 8; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0
-  const hues = [262, 200, 150, 340, 30, 190, 280, 10, 120, 50]
-  return `hsl(${hues[h % hues.length]} 60% 52%)`
-}
-const initials = (name) => (String(name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2) || '?').toUpperCase()
-
-function fmtTime (ts) {
-  const d = new Date(ts)
-  const now = new Date()
-  const hm = d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-  if (d.toDateString() === now.toDateString()) return 'Bugün ' + hm
-  const y = new Date(now); y.setDate(now.getDate() - 1)
-  if (d.toDateString() === y.toDateString()) return 'Dün ' + hm
-  return d.toLocaleDateString('tr-TR') + ' ' + hm
-}
-const fmtDay = (ts) => new Date(ts).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' })
-const fmtHM = (ts) => new Date(ts).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-
-function toast (msg, ms = 3200) {
-  const t = $('#toast')
-  t.textContent = msg
-  t.classList.add('show')
-  clearTimeout(toast._t)
-  toast._t = setTimeout(() => t.classList.remove('show'), ms)
-}
-
-async function copyText (text, msg = 'Kopyalandı') {
-  try { await navigator.clipboard.writeText(text); toast(msg) } catch { toast('Kopyalanamadı') }
-}
-
-// =====================================================================
-// Durum
-// =====================================================================
-const S = {
-  me: null,
-  profile: null,
-  platform: 'win32',
-  servers: [],
-  meta: new Map(),
-  server: null,
-  channel: null,
-  view: 'chat', // 'chat' | 'stage'
-  msgs: [],
-  limit: 100,
-  typing: new Map(), // "server:channel" -> Map(user -> ts)
-  collapsed: load('collapsed', {}),
-  lastRead: load('lastRead', {}),
-  lastChannel: load('lastChannel', {}),
-  showMembers: load('showMembers', true),
-  reply: null,
-  editing: null,
-  attachments: [],
-  search: '',
-  focusTile: null
-}
-
-const settings = Object.assign({
-  inputDevice: 'default',
-  outputDevice: 'default',
-  cameraDevice: '',
-  noiseSuppression: true,
-  echoCancellation: true,
-  autoGain: true,
-  screenQuality: '1080p30',
-  screenAudio: true,
-  notify: 'mentions', // 'all' | 'mentions' | 'none'
-  sounds: true,
-  linkPreviews: true,
-  turnUrl: '',
-  turnUser: '',
-  turnPass: ''
-}, load('settings', {}))
-const saveSettings = () => save('settings', settings)
-
-let voice = null
-
-// Mevcut sunucu verisi kısayolları
-const curMeta = () => S.meta.get(S.server)
-const member = (key, meta = curMeta()) => meta?.members?.find(m => m.key === key)
-function profileOf (key, meta = curMeta()) {
-  if (key === S.me) return S.profile
-  return member(key, meta)?.profile || null
-}
-const nameOf = (key, meta) => profileOf(key, meta)?.name || ('Kullanıcı-' + key.slice(0, 6))
-const colorOf = (key, meta) => profileOf(key, meta)?.color || null
-
-function avatar (key, size = 40, meta, extra = '') {
-  const p = profileOf(key, meta)
-  const src = safeImg(p?.avatar)
-  const style = `width:${size}px;height:${size}px`
-  if (src) return `<img class="av ${extra}" data-speak="${key}" style="${style}" src="${src}" alt="">`
-  return `<div class="av av-fallback ${extra}" data-speak="${key}" style="${style};background:${hashColor(key)};font-size:${Math.round(size * 0.4)}px">${esc(initials(p?.name || key))}</div>`
-}
+/* global icon, Voice, SCREEN_QUALITY, THEMES, applyTheme, extractPalettes, loadCustomThemeImage, currentTheme, themeImage,
+   api, S, settings, saveSettings, $, $$, esc, el, load, save, debounce, toast, copyText, hashColor, initials, fmtTime, fmtDay, fmtHM, fmtDate,
+   curMeta, member, cacheProfile, profileOf, nameOf, colorOf, activityOf, actText, actIcon, actLine, avatar, avatarFull, md, mentionsMe,
+   YT_RE, URL_RE, IMG_URL_RE, openModal, confirmModal, closePopup, openPopup, menu, pointAnchor, fileToDataURL, imageSize, resizeImage, pickImage, GIF_LIMITS, safeImg,
+   BOT_DEFS, botAvatar, botsIn, botEnabledIn, welcomeText, renderBotReply, renderPoll, renderCmdHints, handleMusicCommand, musicAdd, musicSkip, musicStop, MusicPlayer, openMusicPanel, openBotsModal, openBotCard,
+   friendOf, friendStatusOf, isOnline, dmUnread, incomingCount, homeBadge, refreshDMs, renderHomeSidebar, renderHome, homeTabsHTML, activeNowHTML, dmProfileHTML, activityBlock, friendButton, renderDMComposer, friendAction, sendFriendCode, friendMoreMenu */
 
 // =====================================================================
 // Başlatma ve olaylar
 // =====================================================================
 async function init () {
+  await loadCustomThemeImage()
+  applyTheme(settings.theme)
   const r = await api.init()
   S.me = r.me
   S.profile = r.profile
   S.servers = r.servers
   S.platform = r.platform
+  S.version = r.version || ''
   document.body.classList.add('os-' + r.platform)
 
   voice = new Voice({
@@ -127,19 +25,24 @@ async function init () {
     me: S.me,
     settings: () => settings,
     toast,
-    onUpdate: () => { renderVoiceInSidebar(); renderBottomBar(); renderStage(); renderHeader() },
-    onSpeaking: (key, on) => $$(`[data-speak="${key}"]`).forEach(n => n.classList.toggle('speaking', on))
+    onUpdate: () => { renderVoiceInSidebar(); renderVoiceCard(); renderDock(); renderStage(); renderHeader(); renderMeCard(); music?.sync() },
+    onSpeaking: (key, on) => $$(`[data-speak="${CSS.escape(key)}"]`).forEach(n => n.classList.toggle('speaking', on))
   })
+  music = new MusicPlayer()
 
   api.on(onEvent)
   bindStatic()
+  api.activityConfig(settings.activity).then(a => { S.myAct = a; renderActivitySoon() }).catch(() => {})
+  api.activities?.().then(list => { for (const x of list || []) S.acts.set(x.key, { act: x.act, at: Date.now() }); renderActivitySoon() }).catch(() => {})
 
   if (!S.profile.name) openProfileSetup()
-
   for (const s of S.servers) refreshMeta(s.id)
+  await refreshDMs()
+
   const last = load('lastServer', null)
   const first = S.servers.find(s => s.id === last) || S.servers[0]
-  if (first) await selectServer(first.id)
+  if (first && load('lastMode', 'server') !== 'home') await selectServer(first.id)
+  else S.mode = first ? 'home' : 'server'
   renderAll()
 }
 
@@ -147,38 +50,51 @@ const refreshMeta = debounce(async (serverId) => {
   const m = await api.meta(serverId)
   if (!m) return
   S.meta.set(serverId, m)
-  if (serverId === S.server) {
-    // Seçili kanal silindiyse başka bir kanala geç
+  if (!m.pending) for (const mem of m.members) cacheProfile(mem.key, mem.profile)
+  if (serverId === S.server && S.mode === 'server') {
     if (!m.pending && S.channel && !m.channels.some(c => c.id === S.channel)) {
       S.channel = null
       pickDefaultChannel()
       await loadMessages()
     }
-    if (!m.pending && !S.channel) { pickDefaultChannel(); await loadMessages() }
-    renderSidebar(); renderHeader(); renderMembers(); renderBottomBar(); renderEmpty()
+    if (!m.pending && !S.channel) { pickDefaultChannel(); if (S.channel) await loadMessages(true) }
+    renderSidebar(); renderHeader(); renderMembers(); renderLayout(); renderComposerState()
   }
+  if (serverId === voice?.server) { renderVoiceCard(); renderDock(); music?.sync() }
   renderRail()
 }, 80)
 
 const reloadMessages = debounce(() => loadMessages(), 60)
+const renderActivitySoon = (() => {
+  let t
+  return () => {
+    clearTimeout(t)
+    t = setTimeout(() => {
+      renderMeCard(); renderMembers(); renderVoiceInSidebar()
+      if (S.mode === 'home') { renderSidebar(); renderHome(); renderHeader() }
+    }, 250)
+  }
+})()
 
-function onEvent (ev) {
+async function onEvent (ev) {
   switch (ev.type) {
     case 'servers':
       S.servers = ev.servers
       renderRail()
       if (S.server && !S.servers.some(s => s.id === S.server)) {
         S.server = null
-        if (S.servers[0]) selectServer(S.servers[0].id); else renderAll()
+        if (S.servers[0]) selectServer(S.servers[0].id); else { S.mode = 'home'; renderAll() }
       } else if (S.server) refreshMeta(S.server)
       break
     case 'ops': {
       refreshMeta(ev.server)
       let touchCurrent = false
       for (const o of ev.ops) {
-        if (ev.server === S.server && (o.channel === S.channel || ['message-edit', 'message-delete', 'reaction', 'pin', 'profile'].includes(o.type))) touchCurrent = true
+        if (S.mode === 'server' && ev.server === S.server && (o.channel === S.channel || ['message-edit', 'message-delete', 'reaction', 'pin', 'profile', 'poll-vote', 'bot-config'].includes(o.type))) touchCurrent = true
         if (o.type === 'message' && o.author !== S.me) maybeNotify(ev.server, o)
-        if (o.type === 'message') clearTyping(ev.server, o.channel, o.author)
+        if (o.type === 'message') clearTyping(ev.server + ':' + o.channel, o.author)
+        if (o.type === 'music' && ev.server === voice.server) music.sync()
+        if (o.type === 'profile') refreshDMs()
       }
       if (touchCurrent) reloadMessages('cur')
       break
@@ -189,14 +105,37 @@ function onEvent (ev) {
     case 'eph':
       if (ev.kind === 'voice') voice.onState(ev.server, ev.from, ev.data)
       else if (ev.kind === 'typing' && ev.data && typeof ev.data.channel === 'string') {
-        const k = ev.server + ':' + ev.data.channel
-        if (!S.typing.has(k)) S.typing.set(k, new Map())
-        S.typing.get(k).set(ev.from, Date.now())
-        renderTyping()
+        setTyping(ev.server + ':' + ev.data.channel, ev.from)
       }
       break
     case 'signal':
       voice.onSignal(ev.from, ev.data)
+      break
+    case 'dm': {
+      await refreshDMs()
+      for (const o of ev.ops) {
+        if (o.author === S.me) continue
+        if (o.type === 'friend-request') { notifyRaw(`${nameOf(ev.peer)}`, 'Sana arkadaşlık isteği gönderdi'); if (settings.sounds) voice.sound('friend') }
+        if (o.type === 'friend-accept') { notifyRaw(`${nameOf(ev.peer)}`, 'Arkadaşlık isteğini kabul etti 🎉'); if (settings.sounds) voice.sound('friend') }
+        if (o.type === 'dm') {
+          clearTyping('dm:' + ev.peer, ev.peer)
+          const visible = document.hasFocus() && S.mode === 'home' && S.dm === ev.peer
+          if (!visible && settings.notify !== 'none') { notifyRaw(nameOf(ev.peer), o.text || (o.hasImage ? '📷 Resim' : '')); if (settings.sounds) voice.sound('message') }
+        }
+      }
+      if (S.mode === 'home' && S.dm === ev.peer) reloadMessages('cur')
+      break
+    }
+    case 'friends':
+      refreshDMs()
+      break
+    case 'activity':
+      if (ev.from === S.me) S.myAct = ev.act
+      else S.acts.set(ev.from, { act: ev.act, at: Date.now() })
+      renderActivitySoon()
+      break
+    case 'dmtyping':
+      setTyping('dm:' + ev.from, ev.from)
       break
     case 'focus':
       markRead()
@@ -204,28 +143,36 @@ function onEvent (ev) {
   }
 }
 
-function clearTyping (server, channel, user) {
-  S.typing.get(server + ':' + channel)?.delete(user)
+function setTyping (k, who) {
+  if (!S.typing.has(k)) S.typing.set(k, new Map())
+  S.typing.get(k).set(who, Date.now())
   renderTyping()
 }
-setInterval(renderTyping, 1500)
+function clearTyping (k, user) {
+  S.typing.get(k)?.delete(user)
+  renderTyping()
+}
+setInterval(() => renderTyping(), 1500)
+
+function notifyRaw (title, body) { api.notify(title, body) }
 
 function maybeNotify (serverId, o) {
   const meta = S.meta.get(serverId)
-  const myName = S.profile.name
-  const mention = !!(myName && o.text && (o.text.includes('@' + myName) || o.text.includes('@everyone') || o.text.includes('@herkes')))
-  const visible = document.hasFocus() && serverId === S.server && o.channel === S.channel && S.view === 'chat'
+  const mention = mentionsMe(o.text)
+  const visible = document.hasFocus() && S.mode === 'server' && serverId === S.server && o.channel === S.channel && S.view === 'chat'
   if (visible) return
   if (settings.notify === 'none' || (settings.notify === 'mentions' && !mention)) return
   const ch = meta?.channels?.find(c => c.id === o.channel)
-  api.notify(`${nameOf(o.author, meta)}${ch ? ' · #' + ch.name : ''}`, o.text || (o.hasImage ? '📷 Resim' : ''))
+  api.notify(`${nameOf(o.author)}${ch ? ' · #' + ch.name : ''}`, o.text || (o.hasImage ? '📷 Resim' : ''))
   if (settings.sounds) voice.sound('message')
 }
 
 // =====================================================================
-// Sunucu ve kanal seçimi
+// Gezinme: sunucu, kanal, ana sayfa, özel sohbet
 // =====================================================================
 async function selectServer (id) {
+  S.mode = 'server'
+  save('lastMode', 'server')
   S.server = id
   save('lastServer', id)
   S.channel = null
@@ -233,10 +180,38 @@ async function selectServer (id) {
   S.search = ''
   const m = await api.meta(id)
   S.meta.set(id, m)
+  if (m && !m.pending) for (const mem of m.members) cacheProfile(mem.key, mem.profile)
   pickDefaultChannel()
   if (S.view === 'stage' && voice.server !== id) S.view = 'chat'
-  await loadMessages()
+  await loadMessages(true)
   renderAll()
+}
+
+async function goHome () {
+  S.mode = 'home'
+  save('lastMode', 'home')
+  S.dm = null
+  S.view = 'chat'
+  if (S.homeTab === 'blocked') S.blocked = await api.blockedList()
+  renderAll()
+  refreshDMs()
+}
+
+async function openDM (key) {
+  if (!key || key === S.me) return
+  S.mode = 'home'
+  save('lastMode', 'home')
+  S.dm = key
+  S.view = 'chat'
+  S.reply = null
+  S.editing = null
+  S.limit = 100
+  S.search = ''
+  S.dmAllowed = await api.canDM(key).catch(() => false)
+  if (!S.dms.some(d => d.key === key)) await refreshDMs()
+  await loadMessages(true)
+  renderAll()
+  $('#input').focus()
 }
 
 function pickDefaultChannel () {
@@ -280,29 +255,45 @@ async function selectChannel (id) {
   $('#input').focus()
 }
 
+// Sohbet bağlamı: sunucu kanalı ya da özel sohbet
+function chatCtx () {
+  if (S.mode === 'home') return S.dm ? { kind: 'dm', key: S.dm } : null
+  return S.server && S.channel ? { kind: 'channel', server: S.server, channel: S.channel } : null
+}
+const ctxKey = () => { const c = chatCtx(); return !c ? '' : c.kind === 'dm' ? 'dm:' + c.key : c.server + ':' + c.channel }
+const DM_TYPE = { message: 'dm', 'message-edit': 'dm-edit', 'message-delete': 'dm-delete', reaction: 'dm-reaction', 'poll-vote': 'poll-vote' }
+
+async function postCtx (type, data) {
+  const c = chatCtx()
+  if (!c) return
+  if (c.kind === 'dm') return api.dmPost(c.key, DM_TYPE[type], data)
+  return api.post(c.server, type, type === 'message' ? { ...data, channel: c.channel } : data)
+}
+
 async function loadMessages (scrollBottom = false) {
-  if (!S.server || !S.channel) { S.msgs = []; renderMessages(); return }
-  const [s, c] = [S.server, S.channel]
-  const list = await api.messages(s, c, { limit: S.limit })
-  if (s !== S.server || c !== S.channel) return
+  const c = chatCtx()
+  if (!c) { S.msgs = []; renderMessages(); return }
+  const key = ctxKey()
+  const list = c.kind === 'dm' ? await api.dmMessages(c.key, { limit: S.limit }) : await api.messages(c.server, c.channel, { limit: S.limit })
+  if (key !== ctxKey()) return
   S.msgs = list
   renderMessages(scrollBottom)
   markRead()
 }
 
 function markRead () {
-  if (!S.server || !S.channel || !document.hasFocus() || S.view !== 'chat') return
-  const ch = curMeta()?.channels?.find(c => c.id === S.channel)
-  const ts = ch?.lastTs || Date.now()
-  const k = S.server + ':' + S.channel
+  const c = chatCtx()
+  if (!c || !document.hasFocus() || S.view !== 'chat') return
+  let ts
+  if (c.kind === 'dm') ts = friendOf(c.key)?.lastTs || Date.now()
+  else ts = curMeta()?.channels?.find(ch => ch.id === c.channel)?.lastTs || Date.now()
+  const k = ctxKey()
   if ((S.lastRead[k] || 0) < ts) {
     S.lastRead[k] = ts
     save('lastRead', S.lastRead)
-    renderSidebarSoon()
-    renderRail()
+    setTimeout(() => { renderSidebar(); renderRail() }, 30)
   }
 }
-const renderSidebarSoon = (() => { let t; return () => { clearTimeout(t); t = setTimeout(renderSidebar, 30) } })()
 
 const isUnread = (serverId, ch) => ch.kind === 'text' && ch.lastTs && ch.lastAuthor !== S.me && ch.lastTs > (S.lastRead[serverId + ':' + ch.id] || 0)
 
@@ -313,45 +304,58 @@ function renderAll () {
   renderRail()
   renderSidebar()
   renderHeader()
+  renderLayout()
   renderMessages()
   renderMembers()
-  renderBottomBar()
+  renderVoiceCard()
+  renderMeCard()
+  renderDock()
   renderStage()
-  renderEmpty()
+  renderHome()
   renderComposerState()
 }
 
-function renderEmpty () {
-  const empty = $('#empty')
-  const chat = $('#chat')
+function renderLayout () {
   const m = curMeta()
-  let html = ''
-  if (!S.servers.length) {
-    html = `
+  const homeFriends = S.mode === 'home' && !S.dm
+  const stage = S.mode === 'server' && S.view === 'stage' && voice.active && voice.server === S.server
+  let empty = ''
+  if (S.mode === 'server') {
+    if (!S.servers.length) empty = 'welcome'
+    else if (m && m.pending) empty = 'pending'
+    else if (m && !S.channel && !stage) empty = 'nochannel'
+  }
+  $('#home').hidden = !homeFriends
+  $('#stage').hidden = !stage
+  $('#chat').hidden = homeFriends || stage || !!empty
+  const e = $('#empty')
+  e.hidden = !empty
+  if (empty === 'welcome') {
+    e.innerHTML = `
       <div class="empty-card">
-        <div class="empty-logo">${icon('volume', 40)}</div>
-        <h1>Yankı'ya hoş geldin</h1>
+        <img class="hero-mark" src="assets/mark.svg" alt="">
+        <img class="hero-word" src="assets/word.svg" alt="YANKI">
         <p>Merkezi sunucu yok. Topluluğun yalnızca üyelerinin bilgisayarlarında yaşar ve doğrudan, uçtan uca şifreli bağlantılarla haberleşir.</p>
-        <div class="row gap">
+        <div class="row gap center-x">
           <button class="btn primary" data-act="create-server">${icon('plus', 18)} Sunucu oluştur</button>
           <button class="btn" data-act="join-server">${icon('link', 18)} Davet koduyla katıl</button>
         </div>
       </div>`
-  } else if (m && m.pending) {
-    html = `
+  } else if (empty === 'pending') {
+    e.innerHTML = `
       <div class="empty-card">
-        <div class="spinner"></div>
+        <div class="echo-loader"><i></i><i></i><i></i></div>
         <h1>Eşler aranıyor…</h1>
-        <p>Bu sunucunun verileri, çevrimiçi bir üyesi bulunduğu anda doğrudan ondan eşitlenecek. Davet eden kişinin uygulamasının açık olduğundan emin ol.</p>
+        <p>Bu sunucunun verileri, çevrim içi bir üyesi bulunduğu anda doğrudan ondan eşitlenecek. Davet eden kişinin uygulamasının açık olduğundan emin ol.</p>
         <p class="muted small">Bağlı eş: ${m.peers || 0}</p>
         <button class="btn danger" data-act="leave-server">Vazgeç ve ayrıl</button>
       </div>`
-  } else if (m && !S.channel && S.view === 'chat') {
-    html = `<div class="empty-card"><h1>Metin kanalı yok</h1><p>${m.isAdmin ? 'Kenar çubuğundan yeni bir kanal oluşturabilirsin.' : 'Bir yöneticinin kanal oluşturmasını bekle.'}</p></div>`
+  } else if (empty === 'nochannel') {
+    e.innerHTML = `<div class="empty-card"><h1>Metin kanalı yok</h1><p>${m.isAdmin ? 'Kenar çubuğundan yeni bir kanal oluşturabilirsin.' : 'Bir yöneticinin kanal oluşturmasını bekle.'}</p></div>`
   }
-  empty.innerHTML = html
-  empty.hidden = !html
-  chat.hidden = !!html || S.view === 'stage'
+  const showMembers = S.showMembers && ((S.mode === 'server' && m && !m.pending) || S.mode === 'home')
+  $('#app').classList.toggle('no-members', !showMembers)
+  $('#dock').hidden = !stage
 }
 
 // =====================================================================
@@ -359,13 +363,14 @@ function renderEmpty () {
 // =====================================================================
 function renderRail () {
   const rail = $('#rail')
+  const hb = homeBadge()
   const items = S.servers.map(s => {
     const meta = S.meta.get(s.id)
     const unread = meta && !meta.pending && meta.channels.some(c => isUnread(s.id, c))
     const icn = safeImg(s.icon)
     const inVoice = voice?.server === s.id
     return `
-      <button class="rail-item ${s.id === S.server ? 'active' : ''} ${unread ? 'unread' : ''}" data-act="server" data-id="${s.id}" title="${esc(s.name)}">
+      <button class="rail-item ${S.mode === 'server' && s.id === S.server ? 'active' : ''} ${unread ? 'unread' : ''}" data-act="server" data-id="${s.id}" title="${esc(s.name)}">
         <span class="pill"></span>
         ${icn ? `<img src="${icn}" alt="">` : `<span class="rail-initials" style="background:${hashColor(s.id)}">${esc(initials(s.name))}</span>`}
         ${s.pending ? '<span class="rail-badge sync">…</span>' : ''}
@@ -373,33 +378,37 @@ function renderRail () {
       </button>`
   }).join('')
   rail.innerHTML = `
-    <div class="rail-top">${S.platform === 'darwin' ? '<div class="traffic-space"></div>' : ''}</div>
+    <div class="rail-top"></div>
+    <button class="rail-item home ${S.mode === 'home' ? 'active' : ''}" data-act="home" title="Arkadaşlar ve özel mesajlar">
+      <span class="pill"></span><img src="assets/mark.svg" alt="">${hb ? `<span class="rail-badge">${hb > 99 ? '99+' : hb}</span>` : ''}
+    </button>
+    <div class="rail-sep"></div>
     <div class="rail-list">${items}
       <button class="rail-item add" data-act="add-server" title="Sunucu ekle">${icon('plus', 22)}</button>
-    </div>
-    <div class="rail-bottom">
-      <button class="rail-item me" data-act="my-profile" title="Profilim">${avatar(S.me, 44)}</button>
     </div>`
-  const unreadCount = S.servers.filter(s => { const m = S.meta.get(s.id); return m && !m.pending && m.channels.some(c => isUnread(s.id, c)) }).length
+  const unreadCount = S.servers.filter(s => { const m = S.meta.get(s.id); return m && !m.pending && m.channels.some(c => isUnread(s.id, c)) }).length + hb
   api.badge(unreadCount)
 }
 
 // =====================================================================
-// Kanal kenar çubuğu
+// Kenar çubuğu
 // =====================================================================
 function renderSidebar () {
+  if (S.mode === 'home') return renderHomeSidebar()
   const m = curMeta()
-  const header = $('#server-header')
-  const box = $('#channels')
-  if (!m) { header.innerHTML = ''; box.innerHTML = ''; return }
+  const header = $('#side-head')
+  const box = $('#side-body')
+  header.className = ''
+  if (!m) { header.innerHTML = '<img class="wordmark" src="assets/word.svg" alt="YANKI">'; header.style.backgroundImage = ''; box.innerHTML = ''; return }
   if (m.pending) {
-    header.innerHTML = `<div class="sh-title">Eşitleniyor…</div>`
+    header.innerHTML = '<div class="sh-title">Eşitleniyor…</div>'
+    header.style.backgroundImage = ''
     box.innerHTML = `<div class="muted pad small">Sunucu verisi bekleniyor. Bağlı eş: ${m.peers}</div>`
     return
   }
   const banner = safeImg(m.banner)
   header.className = banner ? 'has-banner' : ''
-  header.style.backgroundImage = banner ? `linear-gradient(180deg, transparent 30%, var(--bg-1) 100%), url(${banner})` : ''
+  header.style.backgroundImage = banner ? `linear-gradient(180deg, transparent 20%, rgba(var(--panel-rgb), .95) 100%), url(${banner})` : ''
   header.innerHTML = `
     <button class="sh-title" data-act="server-menu">
       <span class="ellipsis">${esc(m.name)}</span>
@@ -419,7 +428,7 @@ function renderSidebar () {
       <div class="cat">
         ${cat ? `
           <div class="cat-head">
-            <button class="cat-toggle" data-act="toggle-cat" data-id="${cat.id}">${icon(collapsed ? 'chevronRight' : 'chevronDown', 14)}<span>${esc(cat.name)}</span></button>
+            <button class="cat-toggle" data-act="toggle-cat" data-id="${cat.id}">${icon(collapsed ? 'chevronRight' : 'chevronDown', 13)}<span>${esc(cat.name)}</span></button>
             ${m.isAdmin ? `<button class="mini" data-act="new-channel" data-cat="${cat.id}" title="Kanal oluştur">${icon('plus', 15)}</button><button class="mini" data-act="edit-cat" data-id="${cat.id}" title="Kategoriyi düzenle">${icon('settings', 14)}</button>` : ''}
           </div>` : ''}
         ${visible.map(c => channelRow(c, m)).join('')}
@@ -431,51 +440,148 @@ function renderSidebar () {
 function channelRow (c, m) {
   const active = c.kind === 'text' ? (c.id === S.channel && S.view === 'chat') : (voice.server === S.server && voice.channel === c.id)
   const unread = isUnread(S.server, c)
+  const bots = botsIn(m, c.id)
   return `
     <div class="ch ${c.kind} ${active ? 'active' : ''} ${unread ? 'unread' : ''}" data-act="channel" data-id="${c.id}" title="${esc(c.topic || c.name)}">
-      <span class="ch-icon">${icon(c.kind === 'voice' ? 'volume' : 'hash', 18)}</span>
+      <span class="ch-icon">${icon(c.kind === 'voice' ? 'volume' : 'hash', 17)}</span>
       <span class="ch-text">
         <span class="ch-name">${esc(c.name)}</span>
         ${c.topic && c.kind === 'voice' ? `<span class="ch-topic">${esc(c.topic)}</span>` : ''}
       </span>
+      ${bots.size ? `<span class="ch-bots" title="Bu kanaldaki botlar: ${[...bots].map(b => BOT_DEFS[b].name).join(', ')}">${icon('bot', 13)}</span>` : ''}
       ${c.kind === 'voice' && c.userLimit ? `<span class="ch-limit">${voice.participants(S.server, c.id).length}/${c.userLimit}</span>` : ''}
       ${m.isAdmin ? `<button class="mini ch-edit" data-act="edit-channel" data-id="${c.id}" title="Kanalı düzenle">${icon('settings', 14)}</button>` : ''}
     </div>
     ${c.kind === 'voice' ? `<div class="voice-users" data-voice="${c.id}"></div>` : ''}`
 }
 
+// Hem mikrofon hem kulaklık kapalıysa iki simge birden
+function muteIcons (p, size = 14) {
+  return (p.muted || p.deaf ? icon('micOff', size, 'red') : '') + (p.deaf ? icon('headphonesOff', size, 'red') : '')
+}
+
 function renderVoiceInSidebar () {
+  const m = curMeta()
   for (const box of $$('.voice-users')) {
     const cid = box.dataset.voice
     const list = voice.participants(S.server, cid)
+    const ch = m?.channels?.find(c => c.id === cid)
     box.innerHTML = list.map(p => `
       <div class="vu" data-act="user" data-key="${p.key}">
-        ${avatar(p.key, 24, undefined, voice.speaking.has(p.key) ? 'speaking' : '')}
-        <span class="vu-name ${p.self ? 'self' : ''}" style="${colorOf(p.key) ? `color:${colorOf(p.key)}` : ''}">${esc(nameOf(p.key))}</span>
+        ${avatarFull(p.key, 26)}
+        <span class="vu-text">
+          <span class="vu-name ${p.self ? 'self' : ''}" style="${colorOf(p.key) ? `color:${colorOf(p.key)}` : ''}">${esc(nameOf(p.key))}</span>
+          ${actLine(p.key, 'tiny')}
+        </span>
         <span class="vu-flags">
           ${p.screen ? '<span class="live">CANLI</span>' : ''}
           ${p.cam ? icon('video', 14) : ''}
-          ${p.deaf ? icon('headphonesOff', 14, 'red') : p.muted ? icon('micOff', 14, 'red') : ''}
+          ${muteIcons(p)}
         </span>
-      </div>`).join('')
+      </div>`).join('') + (ch?.music
+      ? `<div class="vu bot" data-act="bot" data-id="music">${botAvatar('music', 26)}<span class="vu-text"><span class="vu-name">Müzik Çalar <span class="tag-bot">BOT</span></span><span class="actline music tiny">${icon('music', 12)}<span class="ellipsis">${esc(ch.music.title)}</span></span></span></div>`
+      : '')
   }
 }
 
 // =====================================================================
-// Kanal başlığı
+// Ses kartı, kullanıcı kartı, sahne kontrol çubuğu
+// =====================================================================
+function voiceStatus () {
+  const peers = [...voice.peers.values()]
+  const bad = peers.some(p => ['failed', 'disconnected'].includes(p.pc.connectionState))
+  const connecting = peers.some(p => ['new', 'connecting'].includes(p.pc.connectionState))
+  return bad ? ['bad', 'Bağlantı onarılıyor…'] : connecting ? ['warn', 'Bağlanıyor…'] : ['ok', 'Bağlandı']
+}
+
+function renderVoiceCard () {
+  const box = $('#voice-card')
+  if (!voice.active) { box.hidden = true; box.innerHTML = ''; return }
+  const vm = S.meta.get(voice.server)
+  const vch = vm?.channels?.find(c => c.id === voice.channel)
+  const [cls, text] = voiceStatus()
+  const musicOn = botEnabledIn(voice.server, voice.channel, 'music')
+  box.hidden = false
+  box.innerHTML = `
+    <div class="vc-top">
+      <span class="vc-wave ${cls}"><i></i><i></i><i></i></span>
+      <div class="vc-info">
+        <span class="vc-status ${cls}">${text}</span>
+        <button class="vc-chan" data-act="goto-voice">${esc(vch?.name || 'Ses')}<small> / ${esc(vm?.name || '')}</small></button>
+      </div>
+      <button class="ib hang" data-act="hangup" title="Bağlantıyı kes">${icon('phoneOff', 18)}</button>
+    </div>
+    <div class="vc-btns">
+      <button class="vb ${voice.screen ? 'live' : ''}" data-act="screen" title="${voice.screen ? 'Paylaşımı durdur' : 'Ekranını paylaş (1080p)'}">${icon(voice.screen ? 'screenOff' : 'screen', 18)}</button>
+      <button class="vb ${voice.cam ? 'on' : ''}" data-act="camera" title="${voice.cam ? 'Kamerayı kapat' : 'Kamerayı aç'}">${icon(voice.cam ? 'video' : 'videoOff', 18)}</button>
+      ${musicOn ? `<button class="vb ${music?.state?.playing ? 'on' : ''}" data-act="music" title="Müzik Çalar">${icon('music', 18)}</button>` : ''}
+      <button class="vb" data-act="goto-voice" title="Sahneyi göster">${icon('stage', 18)}</button>
+    </div>`
+}
+
+function renderMeCard () {
+  const box = $('#me-card')
+  if (!S.profile) return
+  const muted = voice?.muted || voice?.deaf
+  box.innerHTML = `
+    <button class="me-user" data-act="my-profile">
+      ${avatarFull(S.me, 38, { online: true })}
+      <span class="me-text"><b>${esc(S.profile.name || 'Ben')}</b>${actLine(S.me, 'tiny') || `<small>${esc(S.profile.status || 'Çevrim içi')}</small>`}</span>
+    </button>
+    <div class="me-btns">
+      <button class="ib ${muted ? 'red' : ''}" data-act="mute" title="${voice?.muted ? 'Sesi aç' : 'Sustur'} (Ctrl+Shift+M)">${icon(muted ? 'micOff' : 'mic', 19)}</button>
+      <button class="ib ${voice?.deaf ? 'red' : ''}" data-act="deafen" title="${voice?.deaf ? 'Sağırlaştırmayı kaldır' : 'Sağırlaştır'} (Ctrl+Shift+D)">${icon(voice?.deaf ? 'headphonesOff' : 'headphones', 19)}</button>
+      <button class="ib" data-act="settings" title="Ayarlar">${icon('settings', 19)}</button>
+    </div>`
+}
+
+function renderDock () {
+  const d = $('#dock')
+  if (!voice.active) { d.innerHTML = ''; return }
+  const muted = voice.muted || voice.deaf
+  const musicOn = botEnabledIn(voice.server, voice.channel, 'music')
+  d.innerHTML = `
+    <button class="db ${muted ? 'off' : ''}" data-act="mute" title="Mikrofon">${icon(muted ? 'micOff' : 'mic', 21)}</button>
+    <button class="db ${voice.deaf ? 'off' : ''}" data-act="deafen" title="Kulaklık">${icon(voice.deaf ? 'headphonesOff' : 'headphones', 21)}</button>
+    <span class="db-sep"></span>
+    <button class="db ${voice.cam ? 'on' : ''}" data-act="camera" title="Kamera">${icon(voice.cam ? 'video' : 'videoOff', 21)}</button>
+    <button class="db ${voice.screen ? 'live' : ''}" data-act="screen" title="${voice.screen ? 'Paylaşımı durdur' : 'Ekran paylaş'}">${icon(voice.screen ? 'screenOff' : 'screen', 21)}</button>
+    ${musicOn ? `<button class="db ${music?.state?.playing ? 'on' : ''}" data-act="music" title="Müzik Çalar">${icon('music', 21)}</button>` : ''}
+    <button class="db" data-act="toggle-view" title="Sohbete dön">${icon('chat', 21)}</button>
+    <span class="db-sep"></span>
+    <button class="db hang" data-act="hangup" title="Bağlantıyı kes">${icon('phoneOff', 21)}</button>`
+}
+
+// =====================================================================
+// Başlık
 // =====================================================================
 function renderHeader () {
   const h = $('#chan-header')
+  if (S.mode === 'home') {
+    if (!S.dm) {
+      h.innerHTML = `<div class="hd-left"><span class="hd-icon">${icon('users', 21)}</span><span class="hd-name">Arkadaşlar</span><span class="hd-sep"></span>${homeTabsHTML()}</div>
+        <div class="hd-right"><button class="hd-btn ${S.showMembers ? 'on' : ''}" data-act="toggle-members" title="Şu an aktif">${icon('activity', 20)}</button></div>`
+      return
+    }
+    const k = S.dm
+    h.innerHTML = `
+      <div class="hd-left">${avatarFull(k, 30, { online: isOnline(k), badge: false })}<button class="hd-name link-like" data-act="user" data-key="${k}">${esc(nameOf(k))}</button>${actLine(k) ? `<span class="hd-sep"></span>${actLine(k)}` : ''}</div>
+      <div class="hd-right">
+        <div class="hd-search">${icon('search', 15)}<input id="search" placeholder="Sohbette ara" value="${esc(S.search)}"></div>
+        <button class="hd-btn ${S.showMembers ? 'on' : ''}" data-act="toggle-members" title="Profil">${icon('users', 20)}</button>
+      </div>`
+    return
+  }
   const m = curMeta()
   if (!m || m.pending) { h.innerHTML = ''; return }
   let left = ''
   if (S.view === 'stage' && voice.channel && voice.server === S.server) {
     const ch = m.channels.find(c => c.id === voice.channel)
-    left = `<span class="hd-icon">${icon('volume', 22)}</span><span class="hd-name">${esc(ch?.name || 'Ses')}</span>${ch?.topic ? `<span class="hd-sep"></span><span class="hd-topic">${esc(ch.topic)}</span>` : ''}`
+    left = `<span class="hd-icon">${icon('volume', 21)}</span><span class="hd-name">${esc(ch?.name || 'Ses')}</span>${ch?.topic ? `<span class="hd-sep"></span><span class="hd-topic">${esc(ch.topic)}</span>` : ''}`
   } else {
     const ch = m.channels.find(c => c.id === S.channel)
     if (!ch) { h.innerHTML = ''; return }
-    left = `<span class="hd-icon">${icon('hash', 22)}</span><span class="hd-name">${esc(ch.name)}</span>${ch.topic ? `<span class="hd-sep"></span><span class="hd-topic">${esc(ch.topic)}</span>` : ''}`
+    left = `<span class="hd-icon">${icon('hash', 21)}</span><span class="hd-name">${esc(ch.name)}</span>${ch.topic ? `<span class="hd-sep"></span><span class="hd-topic">${esc(ch.topic)}</span>` : ''}`
   }
   const chObj = m.channels.find(c => c.id === S.channel)
   h.innerHTML = `
@@ -492,37 +598,6 @@ function renderHeader () {
 // =====================================================================
 // Mesajlar
 // =====================================================================
-const YT_RE = /(?:youtube\.com\/(?:watch\?(?:[^ ]*&)?v=|shorts\/|live\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/
-const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+[^\s<>"'`.,;:!?)\]]/gi
-const IMG_URL_RE = /\.(png|jpe?g|gif|webp)(\?.*)?$/i
-
-function md (text) {
-  const codes = []
-  let s = esc(text)
-  s = s.replace(/```(?:[a-z0-9]+\n)?([\s\S]*?)```/gi, (_, c) => { codes.push(`<pre class="code-block"><code>${c.replace(/^\n/, '')}</code></pre>`); return `\u0000${codes.length - 1}\u0000` })
-  s = s.replace(/`([^`\n]+)`/g, (_, c) => { codes.push(`<code class="code-inline">${c}</code>`); return `\u0000${codes.length - 1}\u0000` })
-  s = s.replace(URL_RE, (u) => { codes.push(`<a href="${u}" class="link" data-act="open-link" data-url="${u}">${u}</a>`); return `\u0000${codes.length - 1}\u0000` })
-  s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
-  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-  s = s.replace(/(^|\s)_([^_\n]+)_(?=\s|$)/g, '$1<em>$2</em>')
-  s = s.replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
-  s = s.replace(/\|\|([^|\n]+)\|\|/g, '<span class="spoiler" data-act="spoiler">$1</span>')
-  s = s.replace(/^&gt; (.*)$/gm, '<span class="quote">$1</span>')
-  s = s.replace(/(^|\s)@([\p{L}\p{N}_.-]{2,32})/gu, (all, pre, name) => {
-    const me = S.profile.name && name.toLowerCase() === S.profile.name.toLowerCase()
-    const known = me || name === 'everyone' || name === 'herkes' || curMeta()?.members?.some(m => m.profile?.name?.toLowerCase() === name.toLowerCase())
-    return known ? `${pre}<span class="mention ${me ? 'me' : ''}">@${name}</span>` : all
-  })
-  s = s.replace(/\n/g, '<br>')
-  s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[+i])
-  return s
-}
-
-const mentionsMe = (text) => {
-  const n = S.profile.name
-  return !!text && ((n && text.toLowerCase().includes('@' + n.toLowerCase())) || /@(everyone|herkes)\b/.test(text))
-}
-
 function messageEmbeds (m) {
   if (!m.text) return ''
   const urls = [...new Set(m.text.match(URL_RE) || [])].slice(0, 4)
@@ -543,34 +618,41 @@ function messageEmbeds (m) {
 
 function renderMessages (forceBottom = false) {
   const box = $('#messages')
-  if (!S.channel) { box.innerHTML = ''; return }
+  const c = chatCtx()
+  if (!c) { box.innerHTML = ''; return }
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120
   const prevHeight = box.scrollHeight
   const prevTop = box.scrollTop
-  const m = curMeta()
-  const ch = m?.channels.find(c => c.id === S.channel)
+  const m = c.kind === 'channel' ? curMeta() : null
+  const ch = m?.channels.find(x => x.id === S.channel)
 
   let list = S.msgs
   const q = S.search.trim().toLowerCase()
   if (q) list = list.filter(x => x.text.toLowerCase().includes(q) || nameOf(x.author).toLowerCase().includes(q))
 
-  // Varsayılan kanalda "topluluğa katıldı" sistem mesajları
-  const firstText = m ? sortedChannels(m).find(c => c.kind === 'text') : null
   let items = list.map(x => ({ kind: 'msg', ts: x.ts, m: x }))
-  if (!q && firstText && firstText.id === S.channel && m) {
-    const from = S.msgs.length >= S.limit ? S.msgs[0].ts : 0
-    for (const mem of m.members) if (mem.joinedAt > from && mem.key !== m.owner) items.push({ kind: 'join', ts: mem.joinedAt, key: mem.key })
-    items.sort((a, b) => a.ts - b.ts)
+  if (!q && m) {
+    const firstText = sortedChannels(m).find(x => x.kind === 'text')
+    const welcomeBot = botsIn(m, S.channel).has('welcome')
+    if (welcomeBot || (firstText && firstText.id === S.channel && !m.bots.some(b => b.id === 'welcome' && b.enabled))) {
+      const from = S.msgs.length >= S.limit ? S.msgs[0].ts : 0
+      for (const mem of m.members) if (mem.joinedAt > from && mem.key !== m.owner) items.push({ kind: 'join', ts: mem.joinedAt, key: mem.key, bot: welcomeBot })
+      items.sort((a, b) => a.ts - b.ts)
+    }
   }
 
   let html = ''
   if (!q && S.msgs.length < S.limit) {
-    html += `
-      <div class="chan-welcome">
-        <div class="cw-icon">${icon('hash', 40)}</div>
-        <h2>#${esc(ch?.name || '')} kanalına hoş geldin!</h2>
-        <p>Bu, #${esc(ch?.name || '')} kanalının başlangıcı.${ch?.topic ? ' ' + esc(ch.topic) : ''}</p>
-      </div>`
+    if (c.kind === 'dm') {
+      html += `<div class="chan-welcome">${avatarFull(c.key, 80, { badge: false })}<h2>${esc(nameOf(c.key))}</h2><p>Bu, <b>${esc(nameOf(c.key))}</b> ile özel sohbetinin başlangıcı. Mesajlar yalnızca ikinizin bilgisayarları arasında, doğrudan ve şifreli gider.</p></div>`
+    } else {
+      html += `
+        <div class="chan-welcome">
+          <div class="cw-icon">${icon('hash', 40)}</div>
+          <h2>#${esc(ch?.name || '')} kanalına hoş geldin!</h2>
+          <p>Bu, #${esc(ch?.name || '')} kanalının başlangıcı.${ch?.topic ? ' ' + esc(ch.topic) : ''}</p>
+        </div>`
+    }
   } else if (!q) {
     html += '<div class="load-more muted small">Daha eski mesajlar için yukarı kaydır…</div>'
   }
@@ -579,39 +661,46 @@ function renderMessages (forceBottom = false) {
   let prev = null
   let lastDay = ''
   const pins = new Set(ch?.pins || [])
+  const isMod = !!m?.isAdmin
   for (const it of items) {
     const day = new Date(it.ts).toDateString()
     if (day !== lastDay) { html += `<div class="day-sep"><span>${esc(fmtDay(it.ts))}</span></div>`; lastDay = day; prev = null }
     if (it.kind === 'join') {
-      html += `<div class="sys-msg">${icon('users', 18)}<span><span class="mention" data-act="user" data-key="${it.key}">@${esc(nameOf(it.key))}</span> topluluğa katıldı!</span><span class="msg-time">${esc(fmtTime(it.ts))}</span></div>`
+      if (it.bot) {
+        html += `<div class="msg bot-msg"><div class="msg-row"><div class="msg-gutter">${botAvatar('welcome', 42)}</div><div class="msg-body"><div class="msg-head"><button class="msg-name" data-act="bot" data-id="welcome">Karşılama</button><span class="tag-bot">BOT</span><span class="msg-time">${esc(fmtTime(it.ts))}</span></div><div class="msg-text">${esc(welcomeText(it.key)).replace('{u}', `<span class="mention" data-act="user" data-key="${it.key}">@${esc(nameOf(it.key))}</span>`)}</div></div></div></div>`
+      } else {
+        html += `<div class="sys-msg">${icon('userPlus', 18)}<span><span class="mention" data-act="user" data-key="${it.key}">@${esc(nameOf(it.key))}</span> topluluğa katıldı!</span><span class="msg-time">${esc(fmtTime(it.ts))}</span></div>`
+      }
       prev = null
       continue
     }
     const x = it.m
-    const grouped = prev && prev.author === x.author && x.ts - prev.ts < 5 * 60 * 1000 && !x.reply
+    const grouped = prev && prev.author === x.author && x.ts - prev.ts < 5 * 60 * 1000 && !x.reply && !x.poll && !prev.poll
     const own = x.author === S.me
     const color = colorOf(x.author)
     const reactions = Object.entries(x.reactions || {})
+    const mem = m ? member(x.author) : null
     html += `
       <div class="msg ${grouped ? 'grouped' : ''} ${mentionsMe(x.text) ? 'mentioned' : ''} ${S.editing === x.id ? 'editing' : ''}" data-id="${x.id}">
         ${x.reply ? `<div class="reply-ref" data-act="jump" data-id="${x.reply.id}">${avatar(x.reply.author, 16)}<span class="rr-name">${esc(nameOf(x.reply.author))}</span><span class="rr-text">${esc(x.reply.text || (x.reply.hasImage ? '📷 Resim' : ''))}</span></div>` : ''}
         <div class="msg-row">
-          <div class="msg-gutter">${grouped ? `<span class="msg-hover-time">${fmtHM(x.ts)}</span>` : `<button class="av-btn" data-act="user" data-key="${x.author}">${avatar(x.author, 40)}</button>`}</div>
+          <div class="msg-gutter">${grouped ? `<span class="msg-hover-time">${fmtHM(x.ts)}</span>` : `<button class="av-btn" data-act="user" data-key="${x.author}">${avatar(x.author, 42)}</button>`}</div>
           <div class="msg-body">
-            ${grouped ? '' : `<div class="msg-head"><button class="msg-name" data-act="user" data-key="${x.author}" ${color ? `style="color:${color}"` : ''}>${esc(nameOf(x.author))}</button>${member(x.author)?.owner ? `<span class="tag owner" title="Sunucu sahibi">${icon('crown', 12)}</span>` : member(x.author)?.admin ? `<span class="tag admin" title="Yönetici">${icon('shield', 12)}</span>` : ''}<span class="msg-time">${esc(fmtTime(x.ts))}</span>${pins.has(x.id) ? `<span class="pinned">${icon('pin', 12)}</span>` : ''}</div>`}
-            ${x.text ? `<div class="msg-text">${md(x.text)}${x.edited ? '<span class="edited">(düzenlendi)</span>' : ''}</div>` : ''}
+            ${grouped ? '' : `<div class="msg-head"><button class="msg-name" data-act="user" data-key="${x.author}" ${color ? `style="color:${color}"` : ''}>${esc(nameOf(x.author))}</button>${mem?.owner ? `<span class="tag owner" title="Sunucu sahibi">${icon('crown', 12)}</span>` : mem?.admin ? `<span class="tag admin" title="Yönetici">${icon('shield', 12)}</span>` : ''}<span class="msg-time">${esc(fmtTime(x.ts))}</span>${pins.has(x.id) ? `<span class="pinned">${icon('pin', 12)}</span>` : ''}</div>`}
+            ${x.poll ? renderPoll(x) : x.text ? `<div class="msg-text ${x.bot ? 'cmd-text' : ''}">${md(x.text)}${x.edited ? '<span class="edited">(düzenlendi)</span>' : ''}</div>` : ''}
+            ${renderBotReply(x)}
             ${x.attachments.length ? `<div class="atts n${Math.min(x.attachments.length, 4)}">${x.attachments.map(a => safeImg(a.data) ? `<img class="att-img" src="${a.data}" alt="${esc(a.name)}" data-act="lightbox" loading="lazy">` : '').join('')}</div>` : ''}
-            ${messageEmbeds(x)}
+            ${x.poll ? '' : messageEmbeds(x)}
             ${reactions.length ? `<div class="reactions">${reactions.map(([e, users]) => `<button class="react ${users.includes(S.me) ? 'mine' : ''}" data-act="react" data-id="${x.id}" data-emoji="${esc(e)}" title="${esc(users.map(u => nameOf(u)).join(', '))}">${esc(e)} <b>${users.length}</b></button>`).join('')}<button class="react add" data-act="react-pick" data-id="${x.id}">${icon('smile', 15)}</button></div>` : ''}
           </div>
           <div class="msg-actions">
             ${['👍', '❤️', '😂'].map(e => `<button data-act="react" data-id="${x.id}" data-emoji="${e}" title="Tepki ver">${e}</button>`).join('')}
             <button data-act="react-pick" data-id="${x.id}" title="Tepki ekle">${icon('smile', 17)}</button>
             <button data-act="reply" data-id="${x.id}" title="Yanıtla">${icon('reply', 17)}</button>
-            ${own ? `<button data-act="edit" data-id="${x.id}" title="Düzenle">${icon('edit', 17)}</button>` : ''}
-            ${m?.isAdmin ? `<button data-act="pin" data-id="${x.id}" title="${pins.has(x.id) ? 'Sabitlemeyi kaldır' : 'Sabitle'}">${icon('pin', 17)}</button>` : ''}
+            ${own && !x.poll ? `<button data-act="edit" data-id="${x.id}" title="Düzenle">${icon('edit', 17)}</button>` : ''}
+            ${isMod ? `<button data-act="pin" data-id="${x.id}" title="${pins.has(x.id) ? 'Sabitlemeyi kaldır' : 'Sabitle'}">${icon('pin', 17)}</button>` : ''}
             <button data-act="copy" data-id="${x.id}" title="Metni kopyala">${icon('copy', 17)}</button>
-            ${own || m?.isAdmin ? `<button class="danger" data-act="delete" data-id="${x.id}" title="Sil">${icon('trash', 17)}</button>` : ''}
+            ${own || isMod ? `<button class="danger" data-act="delete" data-id="${x.id}" title="Sil">${icon('trash', 17)}</button>` : ''}
           </div>
         </div>
       </div>`
@@ -619,7 +708,6 @@ function renderMessages (forceBottom = false) {
   }
   box.innerHTML = html
 
-  // Gömme önizlemelerini doldur
   for (const slot of $$('.embed-slot', box)) fillPreview(slot)
   for (const img of $$('img', box)) img.addEventListener('load', () => { if (box._stick) box.scrollTop = box.scrollHeight }, { once: true })
 
@@ -658,7 +746,7 @@ async function fillPreview (slot) {
 function renderTyping () {
   const box = $('#typing')
   if (!box) return
-  const map = S.typing.get(S.server + ':' + S.channel)
+  const map = S.typing.get(ctxKey())
   const now = Date.now()
   const who = map ? [...map].filter(([k, t]) => now - t < 6000 && k !== S.me).map(([k]) => nameOf(k)) : []
   box.innerHTML = who.length
@@ -670,10 +758,14 @@ function renderTyping () {
 // Mesaj yazma alanı
 // =====================================================================
 function renderComposerState () {
-  const m = curMeta()
-  const ch = m?.channels?.find(c => c.id === S.channel)
   const input = $('#input')
-  input.placeholder = ch ? `#${ch.name} kanalına mesaj gönder` : 'Mesaj gönder'
+  if (S.mode === 'home') {
+    input.placeholder = S.dm ? `@${nameOf(S.dm)} kişisine mesaj gönder` : ''
+  } else {
+    const ch = curMeta()?.channels?.find(c => c.id === S.channel)
+    input.placeholder = ch ? `#${ch.name} kanalına mesaj gönder` : 'Mesaj gönder'
+  }
+  renderDMComposer()
   const rb = $('#reply-bar')
   if (S.reply) {
     const r = S.msgs.find(x => x.id === S.reply)
@@ -698,36 +790,47 @@ function autoGrow () {
 let lastTypingSent = 0
 function onTyping () {
   autoGrow()
-  if (!S.server || !S.channel) return
-  if ($('#input').value.trim() && Date.now() - lastTypingSent > 3000) {
+  renderCmdHints()
+  const c = chatCtx()
+  if (!c) return
+  if ($('#input').value.trim() && !$('#input').value.startsWith('/') && Date.now() - lastTypingSent > 3000) {
     lastTypingSent = Date.now()
-    api.eph(S.server, 'typing', { channel: S.channel })
+    if (c.kind === 'dm') api.dmTyping(c.key)
+    else api.eph(c.server, 'typing', { channel: c.channel })
   }
 }
 
 async function send () {
   const input = $('#input')
   const text = input.value.replace(/\s+$/, '')
-  if (!S.server || !S.channel) return
+  const c = chatCtx()
+  if (!c) return
   try {
     if (S.editing) {
-      if (text.trim()) await api.post(S.server, 'message-edit', { target: S.editing, text })
+      if (text.trim()) await postCtx('message-edit', { target: S.editing, text })
       S.editing = null
     } else {
       if (!text.trim() && !S.attachments.length) return
+      if (c.kind === 'channel' && !S.attachments.length && await handleMusicCommand(text)) {
+        input.value = ''
+        autoGrow()
+        renderCmdHints()
+        return
+      }
       const size = S.attachments.reduce((n, a) => n + a.data.length, 0)
-      if (size > 10 * 1024 * 1024) { toast('Ekler çok büyük (toplam en fazla ~7 MB).'); return }
-      await api.post(S.server, 'message', { channel: S.channel, text, attachments: S.attachments, replyTo: S.reply })
+      if (size > 10.5 * 1024 * 1024) { toast('Ekler çok büyük (toplam en fazla ~7 MB).'); return }
+      await postCtx('message', { text, attachments: S.attachments, replyTo: S.reply })
       S.reply = null
       S.attachments = []
     }
   } catch (e) {
-    toast('Gönderilemedi: ' + (e.message || e))
+    toast('Gönderilemedi: ' + String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
     return
   }
   lastTypingSent = 0
   input.value = ''
   autoGrow()
+  renderCmdHints()
   renderComposerState()
   S._scrollBottomNext = true
   await loadMessages(true)
@@ -749,7 +852,7 @@ async function addFiles (files) {
     if (S.attachments.length >= 6) { toast('En fazla 6 resim.'); break }
     try {
       let data
-      if (f.type === 'image/gif' && f.size < 5 * 1024 * 1024) data = await fileToDataURL(f)
+      if (f.type === 'image/gif' && f.size < 7 * 1024 * 1024) data = await fileToDataURL(f)
       else data = await resizeImage(f, { max: 2048, quality: 0.86 })
       const dims = await imageSize(data)
       S.attachments.push({ type: 'image', data, name: f.name || 'resim', w: dims.w, h: dims.h })
@@ -759,116 +862,45 @@ async function addFiles (files) {
 }
 
 // =====================================================================
-// Resim yardımcıları
-// =====================================================================
-const fileToDataURL = (f) => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(f) })
-const imageSize = (src) => new Promise(resolve => { const i = new Image(); i.onload = () => resolve({ w: i.naturalWidth, h: i.naturalHeight }); i.onerror = () => resolve({ w: 0, h: 0 }); i.src = src })
-
-async function resizeImage (file, { max = 2048, w, h, quality = 0.88, cover = false, type = 'image/jpeg' } = {}) {
-  const bmp = await createImageBitmap(file)
-  let tw, th, sx = 0, sy = 0, sw = bmp.width, sh = bmp.height
-  if (cover && w && h) {
-    const scale = Math.max(w / bmp.width, h / bmp.height)
-    sw = w / scale; sh = h / scale
-    sx = (bmp.width - sw) / 2; sy = (bmp.height - sh) / 2
-    tw = w; th = h
-  } else {
-    const scale = Math.min(1, max / Math.max(bmp.width, bmp.height))
-    tw = Math.round(bmp.width * scale); th = Math.round(bmp.height * scale)
-  }
-  const c = document.createElement('canvas')
-  c.width = tw; c.height = th
-  const ctx = c.getContext('2d')
-  ctx.imageSmoothingQuality = 'high'
-  if (type === 'image/jpeg') { ctx.fillStyle = '#111'; ctx.fillRect(0, 0, tw, th) }
-  ctx.drawImage(bmp, sx, sy, sw, sh, 0, 0, tw, th)
-  const keepAlpha = type === 'image/jpeg' && file.type === 'image/png'
-  return c.toDataURL(keepAlpha ? 'image/webp' : type, quality)
-}
-
-function pickImage (opts) {
-  return new Promise(resolve => {
-    const inp = document.createElement('input')
-    inp.type = 'file'
-    inp.accept = 'image/*'
-    inp.onchange = async () => {
-      const f = inp.files[0]
-      if (!f) return resolve(null)
-      try { resolve(await resizeImage(f, opts)) } catch { toast('Resim okunamadı.'); resolve(null) }
-    }
-    inp.click()
-  })
-}
-
-// =====================================================================
-// Sağ: üye listesi
+// Sağ panel
 // =====================================================================
 function renderMembers () {
   const box = $('#members')
+  if (S.mode === 'home') {
+    box.innerHTML = S.dm ? dmProfileHTML(S.dm) : activeNowHTML()
+    return
+  }
   const m = curMeta()
-  $('#app').classList.toggle('no-members', !!(!S.showMembers || !m || m.pending))
   if (!S.showMembers || !m || m.pending) { box.innerHTML = ''; return }
   const sortFn = (a, b) => (b.owner - a.owner) || (b.admin - a.admin) || nameOf(a.key).localeCompare(nameOf(b.key), 'tr')
   const online = m.members.filter(x => x.online).sort(sortFn)
   const offline = m.members.filter(x => !x.online).sort(sortFn)
+  const bots = m.bots.filter(b => b.enabled)
   const row = (x) => {
     const p = profileOf(x.key)
     return `
       <button class="mem ${x.online ? '' : 'offline'}" data-act="user" data-key="${x.key}">
-        <span class="mem-av">${avatar(x.key, 34)}<span class="status-dot ${x.online ? 'on' : ''}"></span></span>
+        ${avatarFull(x.key, 36, { online: x.online, badge: x.online })}
         <span class="mem-text">
           <span class="mem-name" style="${p?.color && x.online ? `color:${p.color}` : ''}">${esc(nameOf(x.key))}${x.owner ? icon('crown', 13, 'gold') : x.admin ? icon('shield', 13, 'blue') : ''}</span>
-          ${p?.status ? `<span class="mem-status">${esc(p.status)}</span>` : ''}
+          ${(x.online && actLine(x.key)) || (p?.status ? `<span class="mem-status">${esc(p.status)}</span>` : '')}
         </span>
       </button>`
   }
   box.innerHTML = `
     ${m.description ? `<div class="srv-desc">${esc(m.description)}</div>` : ''}
-    <div class="mem-group">Çevrimiçi — ${online.length}</div>
+    <div class="mem-group">Çevrim içi — ${online.length}</div>
     ${online.map(row).join('')}
+    ${bots.length ? `<div class="mem-group">Botlar — ${bots.length}${m.isAdmin ? `<button class="mini" data-act="bots-admin" title="Botları yönet">${icon('settings', 13)}</button>` : ''}</div>${bots.map(b => `
+      <button class="mem" data-act="bot" data-id="${b.id}">
+        ${botAvatar(b.id, 36)}
+        <span class="mem-text"><span class="mem-name">${BOT_DEFS[b.id].name} <span class="tag-bot">BOT</span></span><span class="mem-status">${esc(BOT_DEFS[b.id].commands[0]?.[0] || 'Otomatik')}</span></span>
+      </button>`).join('')}` : (m.isAdmin ? `<button class="mem add-bots" data-act="bots-admin">${icon('bot', 18)}<span>Bot ekle</span></button>` : '')}
     ${offline.length ? `<div class="mem-group">Çevrimdışı — ${offline.length}</div>${offline.map(row).join('')}` : ''}`
 }
 
 // =====================================================================
-// Alt çubuk (kullanıcı + ses kontrolleri)
-// =====================================================================
-function renderBottomBar () {
-  const bar = $('#bottombar')
-  const inVoice = voice.active
-  const vm = inVoice ? S.meta.get(voice.server) : null
-  const vch = vm?.channels?.find(c => c.id === voice.channel)
-  const peers = [...voice.peers.values()]
-  const bad = peers.some(p => ['failed', 'disconnected'].includes(p.pc.connectionState))
-  const connecting = peers.some(p => ['new', 'connecting'].includes(p.pc.connectionState))
-  const status = !inVoice ? '' : bad ? 'Bağlantı sorunlu' : connecting ? 'Bağlanıyor…' : 'Bağlandı'
-  const statusCls = bad ? 'bad' : connecting ? 'warn' : 'ok'
-  bar.innerHTML = `
-    <div class="bb-left">
-      <button class="bb-user" data-act="my-profile">
-        <span class="mem-av">${avatar(S.me, 40)}<span class="status-dot on"></span></span>
-        <span class="bb-user-text"><b>${esc(S.profile.name || 'Ben')}</b><small>${esc(S.profile.status || 'Çevrim içi')}</small></span>
-      </button>
-      ${inVoice ? `
-        <div class="bb-voice">
-          <span class="bb-status ${statusCls}">${icon('signal', 16)} ${status}</span>
-          <button class="bb-chan" data-act="goto-voice" title="Sesli sahneye git">${icon('volume', 16)} <span class="ellipsis">${esc(vch?.name || 'Ses')}</span>${vm && voice.server !== S.server ? `<small> / ${esc(vm.name)}</small>` : ''}</button>
-        </div>` : ''}
-    </div>
-    <div class="bb-right">
-      ${inVoice ? `
-        <button class="bb-btn ${voice.screen ? 'live' : ''}" data-act="screen" title="${voice.screen ? 'Paylaşımı durdur' : 'Ekranını paylaş (1080p)'}">${icon(voice.screen ? 'screenOff' : 'screen', 22)}</button>
-        <button class="bb-btn ${voice.cam ? 'on' : ''}" data-act="camera" title="${voice.cam ? 'Kamerayı kapat' : 'Kamerayı aç'}">${icon(voice.cam ? 'video' : 'videoOff', 22)}</button>
-        <button class="bb-btn ${S.view === 'chat' ? '' : 'on'}" data-act="toggle-view" title="Sohbet / Sahne">${icon(S.view === 'stage' ? 'chat' : 'stage', 22)}</button>
-        <span class="bb-div"></span>` : ''}
-      <button class="bb-icon ${voice.muted || voice.deaf ? 'red' : ''}" data-act="mute" title="${voice.muted ? 'Sesi aç' : 'Sustur'} (Ctrl+Shift+M)">${icon(voice.muted || voice.deaf ? 'micOff' : 'mic', 22)}</button>
-      <button class="bb-icon ${voice.deaf ? 'red' : ''}" data-act="deafen" title="${voice.deaf ? 'Sağırlaştırmayı kaldır' : 'Sağırlaştır'} (Ctrl+Shift+D)">${icon(voice.deaf ? 'headphonesOff' : 'headphones', 22)}</button>
-      <button class="bb-icon" data-act="settings" title="Ayarlar">${icon('settings', 22)}</button>
-      ${inVoice ? `<button class="bb-hangup" data-act="hangup">${icon('phoneOff', 20)} Bağlantıyı kes</button>` : ''}
-    </div>`
-}
-
-// =====================================================================
-// Sesli sahne (görüntü ızgarası)
+// Sesli sahne
 // =====================================================================
 const videoEls = new Map()
 function videoFor (stream) {
@@ -886,35 +918,44 @@ function videoFor (stream) {
 
 function renderStage () {
   const stage = $('#stage')
-  const show = S.view === 'stage' && voice.active && voice.server === S.server
+  const show = S.mode === 'server' && S.view === 'stage' && voice.active && voice.server === S.server
   stage.hidden = !show
-  $('#chat').hidden = show || !$('#empty').hidden
+  renderLayout()
   if (!show) return
   const tiles = voice.tiles()
+  const mp = music?.state?.playing
+  if (mp && music.iframe) tiles.splice(1, 0, { id: 'music', kind: 'music', key: 'music', label: mp.video.title })
   if (S.focusTile && !tiles.some(t => t.id === S.focusTile)) S.focusTile = null
   const used = new Set()
+  const parts = voice.participants(voice.server, voice.channel)
   const tileEl = (t, big) => {
-    const p = voice.participants(voice.server, voice.channel).find(x => x.key === t.key) || {}
+    if (t.kind === 'music') {
+      return el(`<div class="tile music ${big ? 'big' : ''}" data-tile="music"><div class="tile-media"><div id="music-slot"></div></div>
+        <div class="tile-label">${icon('music', 14)}<span class="ellipsis">${esc(t.label)}</span><small>Müzik Çalar</small></div></div>`)
+    }
+    const p = parts.find(x => x.key === t.key) || {}
     const div = el(`
-      <div class="tile ${t.kind} ${big ? 'big' : ''} ${voice.speaking.has(t.key) && t.kind !== 'screen' ? 'speaking' : ''}" data-speak="${t.kind === 'screen' ? '' : t.key}" data-tile="${t.id}">
+      <div class="tile ${t.kind} ${big ? 'big' : ''}" data-tile="${t.id}">
         <div class="tile-media"></div>
         <div class="tile-label">
           ${t.kind === 'screen' ? '<span class="live">CANLI</span>' : ''}
           <span>${esc(nameOf(t.key))}${t.kind === 'screen' ? ' · Ekran' : ''}</span>
           ${t.label ? `<small>${esc(t.label)}</small>` : ''}
-          ${p.deaf ? icon('headphonesOff', 15, 'red') : p.muted ? icon('micOff', 15, 'red') : ''}
+          ${muteIcons(p, 15)}
         </div>
         ${t.kind !== 'avatar' ? `<button class="tile-full" data-act="tile-full" title="Tam ekran">${icon('maximize', 16)}</button>` : ''}
       </div>`)
     const media = $('.tile-media', div)
     if (t.kind === 'avatar') {
-      media.innerHTML = `<div class="tile-av">${avatar(t.key, big ? 120 : 84)}</div>${t.conn && t.conn !== 'connected' ? `<div class="tile-conn">${t.conn === 'failed' ? 'Bağlantı kurulamadı' : 'Bağlanıyor…'}</div>` : ''}`
+      const act = activityOf(t.key)
+      media.innerHTML = `<div class="tile-av">${avatar(t.key, big ? 120 : 86)}</div>${act ? `<div class="tile-act">${actIcon(act, 16)}<span class="ellipsis">${esc(actText(act))}</span></div>` : ''}${t.conn && t.conn !== 'connected' ? `<div class="tile-conn">${t.conn === 'failed' ? 'Bağlantı onarılıyor…' : 'Bağlanıyor…'}</div>` : ''}`
       const pr = profileOf(t.key)
       if (pr?.banner && safeImg(pr.banner)) div.style.setProperty('--tile-bg', `url(${pr.banner})`)
+      div.style.setProperty('--tile-accent', pr?.color || hashColor(t.key))
     } else if (t.stream) {
       const v = videoFor(t.stream)
       used.add(t.stream.id)
-      if (t.self && t.kind === 'cam') v.classList.add('mirror')
+      v.classList.toggle('mirror', !!(t.self && t.kind === 'cam'))
       media.appendChild(v)
       v.play().catch(() => {})
     } else {
@@ -936,79 +977,13 @@ function renderStage () {
     stage.appendChild(grid)
   }
   if (!tiles.length) stage.innerHTML = '<div class="empty-card"><p>Kanalda kimse yok.</p></div>'
-  stage.appendChild(el(`<div class="stage-hint muted small">Bir kutuya tıklayarak odakla · çift tıklayarak tam ekran</div>`))
   for (const [id, v] of videoEls) if (!used.has(id)) { v.srcObject = null; videoEls.delete(id) }
+  music?.position()
 }
 
 // =====================================================================
-// Açılır pencereler (modal) ve menüler
+// Sunucu işlemleri
 // =====================================================================
-function openModal ({ title, body, actions = [], wide = false, cls = '', onClose }) {
-  closePopup()
-  const root = $('#modal-root')
-  const node = el(`
-    <div class="modal-back">
-      <div class="modal ${wide ? 'wide' : ''} ${cls}" role="dialog" aria-modal="true">
-        ${title ? `<div class="modal-head"><h2>${title}</h2><button class="mini" data-close>${icon('x', 20)}</button></div>` : ''}
-        <div class="modal-body"></div>
-        ${actions.length ? `<div class="modal-foot">${actions.map((a, i) => `<button class="btn ${a.kind || ''}" data-i="${i}">${a.label}</button>`).join('')}</div>` : ''}
-      </div>
-    </div>`)
-  const bodyEl = $('.modal-body', node)
-  if (typeof body === 'string') bodyEl.innerHTML = body; else if (body) bodyEl.appendChild(body)
-  const close = () => { node.remove(); document.removeEventListener('keydown', onKey, true); onClose?.() }
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close() } }
-  document.addEventListener('keydown', onKey, true)
-  node.addEventListener('mousedown', (e) => { if (e.target === node) close() })
-  $$('[data-close]', node).forEach(b => b.addEventListener('click', close))
-  $$('.modal-foot button', node).forEach(b => b.addEventListener('click', async () => {
-    const a = actions[+b.dataset.i]
-    if (!a.onClick) return close()
-    b.disabled = true
-    try { const r = await a.onClick(node); if (r !== false) close() } finally { b.disabled = false }
-  }))
-  root.appendChild(node)
-  setTimeout(() => $('input:not([type=file]):not([type=checkbox]):not([type=color]), textarea', bodyEl)?.focus(), 30)
-  return { node, close, body: bodyEl }
-}
-
-function confirmModal (title, text, label = 'Onayla', kind = 'danger') {
-  return new Promise(resolve => {
-    let ok = false
-    openModal({
-      title,
-      body: `<p>${text}</p>`,
-      actions: [{ label: 'Vazgeç' }, { label, kind, onClick: () => { ok = true } }],
-      onClose: () => resolve(ok)
-    })
-  })
-}
-
-function closePopup () { $('#popup-root').innerHTML = '' }
-
-function openPopup (html, anchor, { align = 'right', cls = '' } = {}) {
-  closePopup()
-  const p = el(`<div class="popup ${cls}">${html}</div>`)
-  $('#popup-root').appendChild(p)
-  const r = anchor.getBoundingClientRect()
-  const pw = p.offsetWidth
-  const ph = p.offsetHeight
-  let x = align === 'right' ? r.right + 8 : align === 'left' ? r.left - pw - 8 : r.left
-  let y = align === 'below' ? r.bottom + 6 : r.top
-  if (align === 'above') y = r.top - ph - 8
-  x = Math.max(8, Math.min(x, innerWidth - pw - 8))
-  y = Math.max(8, Math.min(y, innerHeight - ph - 8))
-  p.style.left = x + 'px'
-  p.style.top = y + 'px'
-  return p
-}
-
-function menu (items, anchor, opts) {
-  const p = openPopup(`<div class="menu">${items.map((it, i) => it === '-' ? '<div class="menu-sep"></div>' : `<button class="menu-item ${it.danger ? 'danger' : ''}" data-i="${i}">${it.icon ? icon(it.icon, 17) : ''}<span>${it.label}</span></button>`).join('')}</div>`, anchor, opts)
-  $$('.menu-item', p).forEach(b => b.addEventListener('click', () => { closePopup(); items[+b.dataset.i].onClick() }))
-}
-
-// ---------- Sunucu ekle / katıl ----------
 function openAddServer () {
   let icon64 = null
   const body = el(`
@@ -1030,7 +1005,7 @@ function openAddServer () {
     </div>`)
   const mdl = openModal({ title: 'Sunucu ekle', body, wide: true })
   $('.icon-pick', body).addEventListener('click', async () => {
-    icon64 = await pickImage({ w: 256, h: 256, cover: true, quality: 0.9 })
+    icon64 = await pickImage({ w: 256, h: 256, cover: true, quality: 0.9, gifMax: GIF_LIMITS.icon })
     if (icon64) $('.icon-pick', body).innerHTML = `<img src="${icon64}" alt="">`
   })
   $('#as-create', body).addEventListener('click', async () => {
@@ -1038,7 +1013,7 @@ function openAddServer () {
     if (!name) return toast('Bir ad gir.')
     const id = await api.createServer(name, icon64)
     mdl.close()
-    S.servers = await api.init().then(r => r.servers)
+    S.servers = (await api.init()).servers
     await selectServer(id)
     toast('Sunucu oluşturuldu. Davet kodunu sunucu menüsünden paylaşabilirsin.')
   })
@@ -1047,13 +1022,12 @@ function openAddServer () {
     try {
       const id = await api.joinServer(code)
       mdl.close()
-      S.servers = await api.init().then(r => r.servers)
+      S.servers = (await api.init()).servers
       await selectServer(id)
     } catch (e) { toast('Geçersiz davet kodu.') }
   })
 }
 
-// ---------- Sunucu menüsü ----------
 function serverMenu (anchor) {
   const m = curMeta()
   if (!m || m.pending) return
@@ -1064,6 +1038,7 @@ function serverMenu (anchor) {
     items.push('-',
       { label: 'Kanal oluştur', icon: 'plus', onClick: () => channelModal(null, null) },
       { label: 'Kategori oluştur', icon: 'folderPlus', onClick: () => categoryModal(null) },
+      { label: 'Botlar', icon: 'bot', onClick: openBotsModal },
       { label: 'Sunucu ayarları', icon: 'settings', onClick: serverSettingsModal })
   }
   items.push('-', { label: 'Sunucudan ayrıl', icon: 'logout', danger: true, onClick: leaveServer })
@@ -1079,7 +1054,6 @@ async function leaveServer () {
   await api.leaveServer(S.server)
 }
 
-// ---------- Kanal / kategori ----------
 function channelModal (channelId, categoryId) {
   const m = curMeta()
   const ch = channelId ? m.channels.find(c => c.id === channelId) : null
@@ -1093,7 +1067,7 @@ function channelModal (channelId, categoryId) {
       <label>Kanal adı<input id="ch-name" maxlength="50" value="${esc(ch?.name || '')}" placeholder="yeni-kanal"></label>
       <label>Konu / açıklama<input id="ch-topic" maxlength="200" value="${esc(ch?.topic || '')}" placeholder="İsteğe bağlı"></label>
       <label>Kategori<select id="ch-cat"><option value="">— Kategorisiz —</option>${m.categories.map(c => `<option value="${c.id}" ${(ch ? ch.category : categoryId) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
-      <label class="voice-only" ${ch && ch.kind !== 'voice' ? 'hidden' : ''}>Kullanıcı sınırı (0 = sınırsız)<input id="ch-limit" type="number" min="0" max="99" value="${ch?.userLimit || 0}"></label>
+      <label class="voice-only">Kullanıcı sınırı (0 = sınırsız)<input id="ch-limit" type="number" min="0" max="99" value="${ch?.userLimit || 0}"></label>
     </div>`)
   const actions = []
   if (ch) actions.push({ label: 'Kanalı sil', kind: 'danger left', onClick: async () => { if (await confirmModal('Kanalı sil', `#${esc(ch.name)} kanalı herkes için silinecek.`, 'Sil')) await api.post(S.server, 'channel-update', { target: ch.id, deleted: true }) } })
@@ -1114,7 +1088,7 @@ function channelModal (channelId, categoryId) {
     }
   })
   const mdl = openModal({ title: ch ? 'Kanalı düzenle' : 'Kanal oluştur', body, actions })
-  $$('input[name=kind]', mdl.node).forEach(r => r.addEventListener('change', () => { $('.voice-only', mdl.node).hidden = r.value !== 'voice' || !r.checked }))
+  $$('input[name=kind]', mdl.node).forEach(r => r.addEventListener('change', () => { $('.voice-only', mdl.node).hidden = !(r.value === 'voice' && r.checked) }))
   $('.voice-only', mdl.node).hidden = !ch || ch.kind !== 'voice'
 }
 
@@ -1133,7 +1107,7 @@ function categoryModal (catId) {
       else await api.post(S.server, 'category-create', { name, order: m.categories.length ? Math.max(...m.categories.map(c => c.order)) + 1 : 0 })
     }
   })
-  openModal({ title: cat ? 'Kategoriyi düzenle' : 'Kategori oluştur', body: `<div class="form"><label>Kategori adı<input id="cat-name" maxlength="50" value="${esc(cat?.name || '')}"></label>${cat ? `<div class="row gap"><button class="btn small" id="cat-up">Yukarı taşı</button><button class="btn small" id="cat-down">Aşağı taşı</button></div>` : ''}</div>`, actions })
+  openModal({ title: cat ? 'Kategoriyi düzenle' : 'Kategori oluştur', body: `<div class="form"><label>Kategori adı<input id="cat-name" maxlength="50" value="${esc(cat?.name || '')}"></label>${cat ? '<div class="row gap"><button class="btn small" id="cat-up">Yukarı taşı</button><button class="btn small" id="cat-down">Aşağı taşı</button></div>' : ''}</div>`, actions })
   if (cat) {
     const move = async (dir) => {
       const list = m.categories
@@ -1149,7 +1123,6 @@ function categoryModal (catId) {
   }
 }
 
-// ---------- Sunucu ayarları ----------
 function serverSettingsModal () {
   const m = curMeta()
   let iconData = m.icon
@@ -1163,10 +1136,12 @@ function serverSettingsModal () {
         </div>
       </div>
       <label>Açıklama<textarea id="ss-desc" maxlength="300" rows="3">${esc(m.description || '')}</textarea></label>
-      <div class="banner-pick" id="ss-banner" style="${bannerData ? `background-image:url(${bannerData})` : ''}"><span>${icon('image', 18)} Sunucu bannerı (960×320)</span></div>
+      <div class="banner-pick" id="ss-banner" style="${bannerData ? `background-image:url(${bannerData})` : ''}"><span>${icon('image', 18)} Sunucu bannerı (960×320, GIF olabilir)</span></div>
       ${bannerData ? '<button class="btn small" id="ss-banner-rm">Bannerı kaldır</button>' : ''}
       <h4>Davet kodu</h4>
       <div class="invite-box"><code>yanki://${m.id}</code><button class="btn small" id="ss-copy">${icon('copy', 15)} Kopyala</button></div>
+      <h4>Botlar</h4>
+      <button class="btn small" id="ss-bots">${icon('bot', 15)} Botları yönet</button>
       ${m.banned.length ? `<h4>Yasaklılar</h4>${m.banned.map(b => `<div class="ban-row"><span>${esc(b.profile?.name || b.key.slice(0, 10))}</span><button class="btn small" data-unban="${b.key}">Yasağı kaldır</button></div>`).join('')}` : ''}
     </div>`)
   const mdl = openModal({
@@ -1180,47 +1155,54 @@ function serverSettingsModal () {
       }
     }]
   })
-  $('#ss-icon', body).addEventListener('click', async () => { const d = await pickImage({ w: 256, h: 256, cover: true }); if (d) { iconData = d; $('#ss-icon', body).innerHTML = `<img src="${d}" alt="">` } })
-  $('#ss-banner', body).addEventListener('click', async () => { const d = await pickImage({ w: 960, h: 320, cover: true, quality: 0.85 }); if (d) { bannerData = d; $('#ss-banner', body).style.backgroundImage = `url(${d})` } })
+  $('#ss-icon', body).addEventListener('click', async () => { const d = await pickImage({ w: 256, h: 256, cover: true, gifMax: GIF_LIMITS.icon }); if (d) { iconData = d; $('#ss-icon', body).innerHTML = `<img src="${d}" alt="">` } })
+  $('#ss-banner', body).addEventListener('click', async () => { const d = await pickImage({ w: 960, h: 320, cover: true, quality: 0.85, gifMax: GIF_LIMITS.banner }); if (d) { bannerData = d; $('#ss-banner', body).style.backgroundImage = `url(${d})` } })
   $('#ss-banner-rm', body)?.addEventListener('click', () => { bannerData = null; $('#ss-banner', body).style.backgroundImage = '' })
   $('#ss-copy', body).addEventListener('click', () => copyText('yanki://' + m.id, 'Davet kodu kopyalandı'))
+  $('#ss-bots', body).addEventListener('click', () => { mdl.close(); openBotsModal() })
   $$('[data-unban]', body).forEach(b => b.addEventListener('click', async () => { await api.post(S.server, 'unban', { user: b.dataset.unban }); b.closest('.ban-row').remove() }))
-  void mdl
 }
 
-// ---------- Profil kartı ----------
+// =====================================================================
+// Profil kartı
+// =====================================================================
 function openProfileCard (key, anchor) {
-  const m = curMeta()
-  const mem = member(key)
+  const m = S.mode === 'server' ? curMeta() : null
+  const mem = m ? member(key) : null
   const p = profileOf(key) || {}
   const banner = safeImg(p.banner)
   const isMe = key === S.me
+  const act = activityOf(key)
   const inRoom = voice.active && voice.participants(voice.server, voice.channel).some(x => x.key === key) && !isMe
-  const canMod = m?.isAdmin && !isMe && !mem?.owner && (!mem?.admin || m.owner === S.me)
+  const canMod = m?.isAdmin && mem && !isMe && !mem.owner && (!mem.admin || m.owner === S.me)
+  const fs = friendStatusOf(key)
   const html = `
-    <div class="pcard" style="--accent:${p.color || hashColor(key)}">
+    <div class="pcard" style="--accent-user:${p.color || hashColor(key)}">
       <div class="pc-banner" style="${banner ? `background-image:url(${banner})` : ''}"></div>
-      <div class="pc-av">${avatar(key, 84)}<span class="status-dot big ${mem?.online || isMe ? 'on' : ''}"></span></div>
+      <div class="pc-av">${avatarFull(key, 84, { online: isOnline(key), badge: false })}</div>
       <div class="pc-body">
         <div class="pc-name">${esc(nameOf(key))}${p.pronouns ? `<small> · ${esc(p.pronouns)}</small>` : ''}</div>
-        <div class="pc-key" title="Kimlik anahtarı">${key.slice(0, 8)}…${key.slice(-6)}</div>
+        <button class="pc-key" data-act="copy-key" data-key="${key}" title="Arkadaş kodunu kopyala">${key.slice(0, 8)}…${key.slice(-6)} ${icon('copy', 11)}</button>
         ${p.status ? `<div class="pc-status">${esc(p.status)}</div>` : ''}
-        <div class="pc-roles">
-          ${mem?.owner ? `<span class="role gold">${icon('crown', 13)} Sahip</span>` : ''}
-          ${mem?.admin && !mem?.owner ? `<span class="role blue">${icon('shield', 13)} Yönetici</span>` : ''}
-          ${!mem?.admin ? '<span class="role">Üye</span>' : ''}
-        </div>
+        ${mem ? `<div class="pc-roles">
+          ${mem.owner ? `<span class="role gold">${icon('crown', 13)} Sahip</span>` : ''}
+          ${mem.admin && !mem.owner ? `<span class="role blue">${icon('shield', 13)} Yönetici</span>` : ''}
+          ${!mem.admin ? '<span class="role">Üye</span>' : ''}
+          ${fs === 'friends' ? `<span class="role accent">${icon('userCheck', 13)} Arkadaş</span>` : ''}
+        </div>` : ''}
+        ${act ? activityBlock(act) : ''}
         ${p.bio ? `<h5>Hakkımda</h5><div class="pc-bio">${md(p.bio)}</div>` : ''}
-        ${mem?.joinedAt ? `<h5>Üyelik</h5><div class="pc-since">${new Date(mem.joinedAt).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })}</div>` : ''}
+        ${mem?.joinedAt ? `<h5>Üyelik</h5><div class="pc-since">${fmtDate(mem.joinedAt)}</div>` : ''}
         ${inRoom ? `<h5>Ses düzeyi</h5><input type="range" min="0" max="100" value="${Math.round((voice.volumes[key] ?? 1) * 100)}" id="pc-vol">` : ''}
         <div class="pc-actions">
-          ${isMe ? `<button class="btn small primary" id="pc-edit">${icon('edit', 15)} Profili düzenle</button>` : `<button class="btn small" id="pc-mention">@ Bahset</button>`}
-          ${m?.owner === S.me && !isMe ? `<button class="btn small" id="pc-admin">${mem?.admin ? 'Yöneticiliği al' : 'Yönetici yap'}</button>` : ''}
+          ${isMe ? `<button class="btn small primary" id="pc-edit">${icon('edit', 15)} Profili düzenle</button>` : `<button class="btn small primary" data-act="open-dm" data-key="${key}">${icon('chat', 15)} Mesaj</button>${friendButton(key)}`}
+          ${m && !isMe ? '<button class="btn small" id="pc-mention">@ Bahset</button>' : ''}
+          ${m?.owner === S.me && mem && !isMe ? `<button class="btn small" id="pc-admin">${mem.admin ? 'Yöneticiliği al' : 'Yönetici yap'}</button>` : ''}
           ${canMod ? `<button class="btn small danger-ghost" id="pc-kick">${icon('userX', 15)} At</button><button class="btn small danger-ghost" id="pc-ban">${icon('ban', 15)} Yasakla</button>` : ''}
         </div>
       </div>
     </div>`
-  const align = anchor.closest('#members') ? 'left' : anchor.closest('#bottombar') ? 'above' : 'right'
+  const align = anchor.closest('#members') ? 'left' : 'right'
   const pop = openPopup(html, anchor, { align, cls: 'pcard-pop' })
   $('#pc-edit', pop)?.addEventListener('click', () => { closePopup(); openSettings('profile') })
   $('#pc-mention', pop)?.addEventListener('click', () => { closePopup(); const t = $('#input'); t.value += (t.value && !t.value.endsWith(' ') ? ' ' : '') + '@' + nameOf(key) + ' '; t.focus() })
@@ -1241,7 +1223,7 @@ function emojiPicker (anchor, onPick) {
 async function openScreenPicker () {
   if (S.platform === 'darwin') {
     const ok = await api.mediaAccess('screen')
-    if (!ok) toast('macOS: Sistem Ayarları › Gizlilik ve Güvenlik › Ekran Kaydı bölümünden Yankı\'ya izin ver ve uygulamayı yeniden başlat.', 7000)
+    if (!ok) toast('macOS: Sistem Ayarları › Gizlilik ve Güvenlik › Ekran Kaydı bölümünden YANKI\'ya izin ver ve uygulamayı yeniden başlat.', 7000)
   }
   let sources = []
   try { sources = await api.desktopSources() } catch { toast('Ekran kaynakları alınamadı.'); return }
@@ -1253,7 +1235,7 @@ async function openScreenPicker () {
       <div class="src-grid"></div>
       <div class="picker-opts">
         <label>Kalite<select id="sp-q">${Object.entries(SCREEN_QUALITY).map(([k, q]) => `<option value="${k}" ${settings.screenQuality === k ? 'selected' : ''}>${q.label}</option>`).join('')}</select></label>
-        ${S.platform === 'win32' ? `<label class="check"><input type="checkbox" id="sp-audio" ${settings.screenAudio ? 'checked' : ''}> Sistem sesini de paylaş</label>` : '<span class="muted small">macOS\'ta sistem sesi paylaşımı desteklenmez.</span>'}
+        ${S.platform === 'win32' ? `<label class="check"><input type="checkbox" id="sp-audio" ${settings.screenAudio ? 'checked' : ''}> Sistem sesini de paylaş <span class="muted small">(sohbetteki sesler yayına girmez)</span></label>` : '<span class="muted small">macOS\'ta sistem sesi paylaşımı desteklenmez.</span>'}
       </div>
     </div>`)
   const grid = $('.src-grid', body)
@@ -1287,15 +1269,17 @@ async function openScreenPicker () {
   })
 }
 
-// ---------- Ayarlar ----------
+// =====================================================================
+// Ayarlar
+// =====================================================================
 function openProfileSetup () {
   const body = el(`
-    <div class="form">
+    <div class="form setup">
+      <img class="hero-word" src="assets/word.svg" alt="YANKI">
       <p class="muted">Kimliğin bu bilgisayarda oluşturulan bir şifreleme anahtarıdır — hesap, e-posta veya şifre yok. Sadece nasıl görüneceğini seç.</p>
       <label>Görünen ad<input id="su-name" maxlength="32" placeholder="ör. ReaLPoSSiBiLiTY"></label>
     </div>`)
   openModal({
-    title: 'Yankı\'ya hoş geldin',
     body,
     actions: [{
       label: 'Başla',
@@ -1312,13 +1296,15 @@ function openProfileSetup () {
 
 async function openSettings (tab = 'profile') {
   const draft = { ...S.profile }
-  const tabs = [['profile', 'Profilim'], ['av', 'Ses ve Görüntü'], ['screen', 'Ekran Paylaşımı'], ['notify', 'Bildirimler'], ['net', 'Ağ ve Gizlilik'], ['about', 'Hakkında']]
-  const body = el(`<div class="settings"><nav>${tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}</nav><div class="st-pane"></div></div>`)
+  const tabs = [['profile', 'Profilim', 'edit'], ['appearance', 'Görünüm', 'palette'], ['activity', 'Etkinlik', 'gamepad'], ['av', 'Ses ve Görüntü', 'mic'], ['screen', 'Ekran Paylaşımı', 'screen'], ['notify', 'Bildirimler', 'bell'], ['net', 'Ağ ve Gizlilik', 'shield'], ['about', 'Hakkında', 'sparkle']]
+  const body = el(`<div class="settings"><nav>${tabs.map(([k, l, i]) => `<button data-tab="${k}">${icon(i, 16)}<span>${l}</span></button>`).join('')}</nav><div class="st-pane"></div></div>`)
   let testStream = null
   let testRaf = 0
-  const stopTest = () => { testStream?.getTracks().forEach(t => t.stop()); testStream = null; cancelAnimationFrame(testRaf) }
-  const mdl = openModal({ title: 'Ayarlar', body, wide: true, cls: 'settings-modal', onClose: stopTest })
+  let testCtx = null
+  const stopTest = () => { testStream?.getTracks().forEach(t => t.stop()); testStream = null; cancelAnimationFrame(testRaf); testCtx?.close().catch(() => {}); testCtx = null }
+  openModal({ title: 'Ayarlar', body, wide: true, cls: 'settings-modal', onClose: stopTest })
   const pane = $('.st-pane', body)
+  let palettes = null
 
   const show = async (k) => {
     stopTest()
@@ -1326,18 +1312,19 @@ async function openSettings (tab = 'profile') {
     if (k === 'profile') {
       const preview = () => {
         const pv = $('.pv', pane)
-        pv.style.setProperty('--accent', draft.color || hashColor(S.me))
+        pv.style.setProperty('--accent-user', draft.color || hashColor(S.me))
         $('.pv-banner', pane).style.backgroundImage = draft.banner ? `url(${draft.banner})` : ''
-        $('.pv-av', pane).innerHTML = draft.avatar ? `<img class="av" src="${draft.avatar}" style="width:80px;height:80px">` : `<div class="av av-fallback" style="width:80px;height:80px;background:${hashColor(S.me)};font-size:32px">${esc(initials(draft.name))}</div>`
+        $('.pv-av', pane).innerHTML = `<span class="avw" style="--s:80px">${draft.avatar ? `<img src="${draft.avatar}" alt="">` : `<span class="av-fallback" style="background:${hashColor(S.me)};font-size:32px">${esc(initials(draft.name))}</span>`}</span>`
         $('.pv-name', pane).textContent = draft.name || 'Adın'
         $('.pv-status', pane).textContent = draft.status || ''
         $('.pv-bio', pane).innerHTML = md(draft.bio || '')
+        $('.pv-act', pane).innerHTML = S.myAct ? activityBlock(S.myAct) : ''
       }
       pane.innerHTML = `
         <div class="profile-edit">
           <div class="form">
             <label>Görünen ad<input data-f="name" maxlength="32" value="${esc(draft.name)}"></label>
-            <label>Durum mesajı<input data-f="status" maxlength="80" value="${esc(draft.status || '')}" placeholder="ör. Valheim oynuyor 🎮"></label>
+            <label>Durum mesajı<input data-f="status" maxlength="80" value="${esc(draft.status || '')}" placeholder="ör. Akşam Valheim var 🎮"></label>
             <label>Zamirler<input data-f="pronouns" maxlength="30" value="${esc(draft.pronouns || '')}" placeholder="İsteğe bağlı"></label>
             <label>Hakkımda<textarea data-f="bio" maxlength="600" rows="4" placeholder="Kendinden bahset… (markdown desteklenir)">${esc(draft.bio || '')}</textarea></label>
             <div class="row gap wrap">
@@ -1346,27 +1333,112 @@ async function openSettings (tab = 'profile') {
               <button class="btn small" id="pe-bn">${icon('image', 15)} Banner yükle</button>
               <button class="btn small" id="pe-bn-rm">Bannerı kaldır</button>
             </div>
-            <label class="row gap center">Profil rengi <input type="color" data-f="color" value="${draft.color || '#7c5cff'}"></label>
+            <p class="muted small">Hareketli GIF desteklenir: avatar en fazla 2,5 MB, banner en fazla 5 MB. GIF'ler kırpılmadan, olduğu gibi yüklenir.</p>
+            <label class="row gap center">Profil rengi <input type="color" data-f="color" value="${draft.color || '#ff4f8b'}"></label>
             <div class="row gap"><button class="btn primary" id="pe-save">Değişiklikleri kaydet</button></div>
           </div>
           <div class="pv">
             <div class="pv-banner"></div>
             <div class="pv-av"></div>
-            <div class="pv-body"><div class="pv-name"></div><div class="pv-status"></div><div class="pv-bio"></div></div>
+            <div class="pv-body"><div class="pv-name"></div><div class="pv-status"></div><div class="pv-act"></div><div class="pv-bio"></div></div>
           </div>
         </div>`
       preview()
       $$('[data-f]', pane).forEach(i => i.addEventListener('input', () => { draft[i.dataset.f] = i.value; preview() }))
-      $('#pe-av', pane).addEventListener('click', async () => { const d = await pickImage({ w: 256, h: 256, cover: true, quality: 0.88 }); if (d) { draft.avatar = d; preview() } })
+      $('#pe-av', pane).addEventListener('click', async () => { const d = await pickImage({ w: 256, h: 256, cover: true, quality: 0.88, gifMax: GIF_LIMITS.avatar }); if (d) { draft.avatar = d; preview() } })
       $('#pe-av-rm', pane).addEventListener('click', () => { draft.avatar = null; preview() })
-      $('#pe-bn', pane).addEventListener('click', async () => { const d = await pickImage({ w: 960, h: 320, cover: true, quality: 0.85 }); if (d) { draft.banner = d; preview() } })
+      $('#pe-bn', pane).addEventListener('click', async () => { const d = await pickImage({ w: 960, h: 320, cover: true, quality: 0.85, gifMax: GIF_LIMITS.banner }); if (d) { draft.banner = d; preview() } })
       $('#pe-bn-rm', pane).addEventListener('click', () => { draft.banner = null; preview() })
       $('#pe-save', pane).addEventListener('click', async () => {
         if (!draft.name.trim()) return toast('Ad boş olamaz.')
         S.profile = await api.setProfile(draft)
-        toast('Profil kaydedildi ve tüm sunuculara yayıldı.')
+        toast('Profil kaydedildi ve tüm sunuculara, arkadaşlarına yayıldı.')
         renderAll()
       })
+    } else if (k === 'appearance') {
+      const cur = settings.theme
+      const custom = themeImage.get()
+      if (cur.id === 'custom' && custom && !palettes) palettes = await extractPalettes(custom).catch(() => [])
+      const t = currentTheme(cur)
+      pane.innerHTML = `
+        <div class="form">
+          <h4>Tema</h4>
+          <div class="theme-grid">
+            ${THEMES.map(th => `<button class="theme-card ${cur.id === th.id ? 'on' : ''}" data-theme="${th.id}">
+              <span class="tc-img" style="${th.image ? `background-image:url(themes/${th.image}-thumb.jpg)` : `background:radial-gradient(circle at 25% 30%, ${th.accent}66, transparent 55%), radial-gradient(circle at 80% 85%, ${th.accent2}55, transparent 55%), ${th.bg}`}"></span>
+              <span class="tc-name"><i style="background:${th.accent}"></i><i style="background:${th.accent2}"></i>${esc(th.name)}</span>
+            </button>`).join('')}
+            <button class="theme-card custom ${cur.id === 'custom' ? 'on' : ''}" data-theme="custom">
+              <span class="tc-img" style="${custom ? `background-image:url(${custom})` : ''}">${custom ? '' : icon('upload', 26)}</span>
+              <span class="tc-name">${icon('image', 13)} Kendi resmin</span>
+            </button>
+          </div>
+          ${cur.id === 'custom' ? `
+            <div class="custom-theme">
+              <div class="row gap wrap"><button class="btn small" id="ct-upload">${icon('upload', 15)} ${custom ? 'Resmi değiştir' : 'Resim yükle'}</button>${custom ? '<button class="btn small" id="ct-remove">Resmi kaldır</button>' : ''}</div>
+              ${palettes && palettes.length ? `<div class="muted small">Resminden çıkarılan palet önerileri:</div>
+              <div class="palettes">${palettes.map((p, i) => `<button class="pal ${cur.accent === p.accent ? 'on' : ''}" data-pal="${i}" title="Bu paleti kullan"><i style="background:${p.bg}"></i><i style="background:${p.accent}"></i><i style="background:${p.accent2}"></i></button>`).join('')}</div>` : ''}
+              <div class="row gap wrap">
+                <label class="row gap center">Vurgu <input type="color" id="ct-accent" value="${t.accent}"></label>
+                <label class="row gap center">İkinci vurgu <input type="color" id="ct-accent2" value="${t.accent2}"></label>
+                <label class="row gap center">Taban <input type="color" id="ct-bg" value="${t.bg}"></label>
+              </div>
+            </div>` : `
+            <label class="row gap center">Vurgu rengini değiştir <input type="color" id="ap-accent" value="${t.accent}"> ${cur.accentOverride ? '<button class="btn small" id="ap-accent-reset">Varsayılana dön</button>' : ''}</label>`}
+          <h4>Arka plan</h4>
+          <label>Karartma <input type="range" data-k="dim" min="0" max="85" value="${cur.dim}"></label>
+          <label>Bulanıklık <input type="range" data-k="blur" min="0" max="30" value="${cur.blur}"></label>
+          <label>Panel saydamlığı <input type="range" data-k="glass" min="0" max="60" value="${cur.glass}"></label>
+          <p class="muted small">Arka plan ayarları resimli temalarda geçerlidir. Tema resimleri YANKI için özel olarak üretilmiştir ve serbestçe kullanılabilir.</p>
+        </div>`
+      const commit = () => { applyTheme(settings.theme); saveSettings() }
+      const uploadThemeImage = async () => {
+        const d = await pickImage({ max: 1920, quality: 0.86 })
+        if (!d) return
+        await api.saveThemeImage(d)
+        themeImage.set(d)
+        palettes = await extractPalettes(d).catch(() => [])
+        settings.theme = { ...settings.theme, id: 'custom', ...(palettes[0] || {}) }
+        commit(); show('appearance')
+        toast('Resim yüklendi; resminden bir palet seçildi. Diğer önerileri de deneyebilirsin.', 4500)
+      }
+      $$('[data-theme]', pane).forEach(b => b.addEventListener('click', async () => {
+        const id = b.dataset.theme
+        if (id === 'custom' && !themeImage.get()) { await uploadThemeImage(); return }
+        settings.theme = { ...settings.theme, id }
+        delete settings.theme.accentOverride
+        if (id === 'custom' && !settings.theme.accent) Object.assign(settings.theme, (palettes || [])[0] || {})
+        commit(); show('appearance')
+      }))
+      $('#ct-upload', pane)?.addEventListener('click', uploadThemeImage)
+      $('#ct-remove', pane)?.addEventListener('click', async () => { await api.saveThemeImage(null); themeImage.set(null); palettes = null; settings.theme = { ...settings.theme, id: 'yanki' }; commit(); show('appearance') })
+      $$('[data-pal]', pane).forEach(b => b.addEventListener('click', () => { Object.assign(settings.theme, palettes[+b.dataset.pal]); commit(); show('appearance') }))
+      $('#ct-accent', pane)?.addEventListener('input', e => { settings.theme.accent = e.target.value; commit() })
+      $('#ct-accent2', pane)?.addEventListener('input', e => { settings.theme.accent2 = e.target.value; commit() })
+      $('#ct-bg', pane)?.addEventListener('input', e => { settings.theme.bg = e.target.value; commit() })
+      $('#ap-accent', pane)?.addEventListener('input', e => { settings.theme.accentOverride = e.target.value; commit() })
+      $('#ap-accent-reset', pane)?.addEventListener('click', () => { delete settings.theme.accentOverride; commit(); show('appearance') })
+      $$('[data-k]', pane).forEach(i => i.addEventListener('input', () => { settings.theme[i.dataset.k] = +i.value; commit() }))
+    } else if (k === 'activity') {
+      const a = settings.activity
+      pane.innerHTML = `
+        <div class="form">
+          <label class="check"><input type="checkbox" id="act-en" ${a.enabled ? 'checked' : ''}> Oynadığım oyunu ve dinlediğim müziği profilimde göster</label>
+          <div class="act-now">${S.myAct ? activityBlock(S.myAct) : '<span class="muted">Şu an bir oyun ya da çalan şarkı algılanmadı.</span>'}</div>
+          <p class="muted small">Oyunlar; bilinen oyunlar listesinden ve Steam, Epic, GOG, Riot kurulum klasörlerinden otomatik tanınır. Müzik: Spotify (Windows ve macOS) ve Apple Music (macOS). Simgeler bilgisayarındaki uygulamanın kendi simgesidir. macOS ilk seferde Spotify'ı okumak için izin isteyebilir. Etkinliğin yalnızca sunucu üyelerine ve arkadaşlarına gider.</p>
+          <h4>Kendi oyunlarını ekle</h4>
+          <p class="muted small">Bir oyun algılanmıyorsa Görev Yöneticisi'nde (macOS'ta Etkinlik Monitörü) görünen süreç adını yaz.</p>
+          <div class="cg-list">${a.custom.map((c, i) => `<div class="cg-row"><code>${esc(c.exe)}</code><span>→</span><b>${esc(c.name)}</b><button class="mini" data-cg-del="${i}">${icon('x', 14)}</button></div>`).join('') || '<span class="muted small">Henüz özel oyun yok.</span>'}</div>
+          <div class="row gap"><input id="cg-exe" placeholder="ornek-oyun.exe"><input id="cg-name" placeholder="Görünecek ad"><button class="btn small" id="cg-add">Ekle</button></div>
+        </div>`
+      const push = async () => { saveSettings(); S.myAct = await api.activityConfig(a).catch(() => S.myAct); renderMeCard() }
+      $('#act-en', pane).addEventListener('change', e => { a.enabled = e.target.checked; push() })
+      $('#cg-add', pane).addEventListener('click', () => {
+        const exe = $('#cg-exe', pane).value.trim(); const name = $('#cg-name', pane).value.trim()
+        if (!exe || !name) return toast('Süreç adı ve görünecek ad gerekli.')
+        a.custom.push({ exe, name }); push(); show('activity')
+      })
+      $$('[data-cg-del]', pane).forEach(b => b.addEventListener('click', () => { a.custom.splice(+b.dataset.cgDel, 1); push(); show('activity') }))
     } else if (k === 'av') {
       let devices = []
       try {
@@ -1401,9 +1473,9 @@ async function openSettings (tab = 'profile') {
         if (testStream) { stopTest(); $('.meter i', pane).style.width = '0'; return }
         testStream = await navigator.mediaDevices.getUserMedia({ audio: voice._audioConstraints() }).catch(() => null)
         if (!testStream) return toast('Mikrofon açılamadı')
-        const ctx = new AudioContext()
-        const an = ctx.createAnalyser()
-        ctx.createMediaStreamSource(testStream).connect(an)
+        testCtx = new AudioContext()
+        const an = testCtx.createAnalyser()
+        testCtx.createMediaStreamSource(testStream).connect(an)
         const buf = new Uint8Array(an.fftSize)
         const loop = () => {
           an.getByteTimeDomainData(buf)
@@ -1426,18 +1498,24 @@ async function openSettings (tab = 'profile') {
         <div class="form">
           <label>Varsayılan kalite<select id="sc-q">${Object.entries(SCREEN_QUALITY).map(([key, q]) => `<option value="${key}" ${settings.screenQuality === key ? 'selected' : ''}>${q.label} — en fazla ${(q.bitrate / 1e6).toFixed(0)} Mbps</option>`).join('')}</select></label>
           <p class="muted small">Ekran paylaşımı eşler arası doğrudan gönderilir. Her izleyici için ayrı bir akış yüklenir; 1080p60'ta 3 izleyici ≈ 27 Mbps yükleme hızı gerektirir. Bağlantın yavaşsa 1080p30 veya 720p seç.</p>
-          ${S.platform === 'win32' ? `<label class="check"><input type="checkbox" id="sc-audio" ${settings.screenAudio ? 'checked' : ''}> Tüm ekran paylaşılırken sistem sesini de paylaş</label>` : '<p class="muted small">macOS: İlk paylaşımda Sistem Ayarları › Gizlilik ve Güvenlik › Ekran Kaydı izni gerekir.</p>'}
+          ${S.platform === 'win32' ? `
+            <label class="check"><input type="checkbox" id="sc-audio" ${settings.screenAudio ? 'checked' : ''}> Tüm ekran paylaşılırken sistem sesini de paylaş</label>
+            <p class="muted small">Yankı koruması: YANKI'nın kendi çaldığı sesler (sohbetteki diğer kişiler, müzik botu) yayından çıkarılır; izleyenler kendi seslerini duymaz. Sistem bunu desteklemezse ekran otomatik olarak sessiz paylaşılır.</p>
+            <label class="check"><input type="checkbox" id="sc-echo" ${settings.allowEchoAudio ? 'checked' : ''}> Yankı koruması çalışmasa da sistem sesini paylaş (önerilmez)</label>`
+          : '<p class="muted small">macOS: İlk paylaşımda Sistem Ayarları › Gizlilik ve Güvenlik › Ekran Kaydı izni gerekir. Sistem sesi paylaşımı macOS\'ta desteklenmez.</p>'}
         </div>`
       $('#sc-q', pane).addEventListener('change', e => { settings.screenQuality = e.target.value; saveSettings() })
       $('#sc-audio', pane)?.addEventListener('change', e => { settings.screenAudio = e.target.checked; saveSettings() })
+      $('#sc-echo', pane)?.addEventListener('change', e => { settings.allowEchoAudio = e.target.checked; saveSettings() })
     } else if (k === 'notify') {
       pane.innerHTML = `
         <div class="form">
-          <label>Masaüstü bildirimleri<select id="nt-mode">
+          <label>Sunucu mesajları için masaüstü bildirimi<select id="nt-mode">
             <option value="all" ${settings.notify === 'all' ? 'selected' : ''}>Tüm mesajlar</option>
             <option value="mentions" ${settings.notify === 'mentions' ? 'selected' : ''}>Yalnızca benden bahsedildiğinde (@ad, @herkes)</option>
             <option value="none" ${settings.notify === 'none' ? 'selected' : ''}>Kapalı</option>
           </select></label>
+          <p class="muted small">Özel mesajlar ve arkadaşlık istekleri için "Kapalı" seçilmedikçe her zaman bildirim gelir.</p>
           <label class="check"><input type="checkbox" id="nt-sound" ${settings.sounds ? 'checked' : ''}> Mesaj sesi çal</label>
         </div>`
       $('#nt-mode', pane).addEventListener('change', e => { settings.notify = e.target.value; saveSettings() })
@@ -1445,8 +1523,8 @@ async function openSettings (tab = 'profile') {
     } else if (k === 'net') {
       pane.innerHTML = `
         <div class="form">
-          <h4>Kimliğin</h4>
-          <div class="invite-box"><code>${S.me}</code><button class="btn small" id="net-copy">${icon('copy', 15)}</button></div>
+          <h4>Kimliğin ve arkadaş kodun</h4>
+          <div class="invite-box"><code>yanki://arkadas/${S.me}</code><button class="btn small" id="net-copy">${icon('copy', 15)}</button></div>
           <p class="muted small">Bu ed25519 açık anahtarıdır. Gizli anahtar yalnızca bu bilgisayarda saklanır; tüm mesajların onunla imzalanır.</p>
           <h4>Bağlantı önizlemeleri</h4>
           <label class="check"><input type="checkbox" id="net-prev" ${settings.linkPreviews ? 'checked' : ''}> Paylaşılan bağlantıların başlık/görsel önizlemesini getir</label>
@@ -1457,49 +1535,56 @@ async function openSettings (tab = 'profile') {
           <div class="row gap"><label class="grow">Kullanıcı<input id="net-tu" value="${esc(settings.turnUser)}"></label><label class="grow">Parola<input id="net-tp" type="password" value="${esc(settings.turnPass)}"></label></div>
           <button class="btn small primary" id="net-save">Kaydet</button>
         </div>`
-      $('#net-copy', pane).addEventListener('click', () => copyText(S.me))
+      $('#net-copy', pane).addEventListener('click', () => copyText('yanki://arkadas/' + S.me, 'Arkadaş kodun kopyalandı'))
       $('#net-prev', pane).addEventListener('change', e => { settings.linkPreviews = e.target.checked; saveSettings(); renderMessages() })
       $('#net-save', pane).addEventListener('click', () => { settings.turnUrl = $('#net-turn', pane).value.trim(); settings.turnUser = $('#net-tu', pane).value; settings.turnPass = $('#net-tp', pane).value; saveSettings(); toast('Kaydedildi — sonraki ses bağlantısında geçerli.') })
     } else if (k === 'about') {
       pane.innerHTML = `
         <div class="about">
-          <div class="empty-logo">${icon('volume', 36)}</div>
-          <h2>Yankı</h2>
-          <p>Merkezi sunucusuz, eşler arası (P2P) topluluk ve haberleşme uygulaması.</p>
+          <img class="about-mark" src="assets/mark.svg" alt="">
+          <img class="hero-word" src="assets/word.svg" alt="YANKI">
+          <p>Merkezi sunucusuz, eşler arası (P2P) topluluk ve haberleşme uygulaması.${S.version ? ` Sürüm ${esc(S.version)}` : ''}</p>
           <ul class="muted small">
             <li>Eş keşfi: Hyperswarm DHT + NAT delme (UDP hole-punching)</li>
             <li>Taşıma: Noise protokolüyle uçtan uca şifreli akışlar</li>
             <li>Veri: ed25519 imzalı, değişmez olay günlüğü; her üyede tam kopya</li>
+            <li>Özel mesajlar: yalnızca iki kişi arasında, üçüncü eşlere hiç gitmez</li>
             <li>Ses/Görüntü/Ekran: WebRTC (DTLS-SRTP), mesh topoloji</li>
           </ul>
-          <p class="muted small">Klavye: Ctrl/⌘+Shift+M sustur · Ctrl/⌘+Shift+D sağırlaştır · Ctrl/⌘+K kanal ara · Esc iptal</p>
+          <p class="muted small">Klavye: Ctrl/⌘+Shift+M sustur · Ctrl/⌘+Shift+D sağırlaştır · Ctrl/⌘+K hızlı geçiş · Esc iptal</p>
         </div>`
     }
   }
   $$('nav button', body).forEach(b => b.addEventListener('click', () => show(b.dataset.tab)))
   show(tab)
-  void mdl
 }
 
-// ---------- Hızlı kanal geçişi (Ctrl+K) ----------
+// ---------- Hızlı geçiş (Ctrl+K) ----------
 function quickSwitcher () {
   const all = []
+  for (const d of S.dms) if (d.status === 'friends' || d.lastTs) all.push({ dm: d.key, name: nameOf(d.key), sub: 'Özel mesaj' })
   for (const s of S.servers) {
     const m = S.meta.get(s.id)
     if (!m || m.pending) continue
-    for (const c of m.channels) all.push({ s, c })
+    for (const c of m.channels) all.push({ s, c, name: c.name, sub: s.name })
   }
-  const body = el(`<div class="qs"><input id="qs-in" placeholder="Kanal veya sunucu ara…"><div class="qs-list"></div></div>`)
+  const body = el('<div class="qs"><input id="qs-in" placeholder="Kanal, sunucu ya da arkadaş ara…"><div class="qs-list"></div></div>')
   const mdl = openModal({ body, cls: 'qs-modal' })
   let idx = 0
   let found = []
   const draw = () => {
     const q = $('#qs-in', body).value.toLowerCase()
-    found = all.filter(x => !q || x.c.name.toLowerCase().includes(q) || x.s.name.toLowerCase().includes(q)).slice(0, 12)
+    found = all.filter(x => !q || x.name.toLowerCase().includes(q) || x.sub.toLowerCase().includes(q)).slice(0, 12)
     idx = Math.min(idx, Math.max(0, found.length - 1))
-    $('.qs-list', body).innerHTML = found.map((x, i) => `<button class="qs-item ${i === idx ? 'on' : ''}" data-i="${i}">${icon(x.c.kind === 'voice' ? 'volume' : 'hash', 16)} ${esc(x.c.name)} <small>${esc(x.s.name)}</small></button>`).join('')
+    $('.qs-list', body).innerHTML = found.map((x, i) => `<button class="qs-item ${i === idx ? 'on' : ''}" data-i="${i}">${x.dm ? avatar(x.dm, 18) : icon(x.c.kind === 'voice' ? 'volume' : 'hash', 16)} ${esc(x.name)} <small>${esc(x.sub)}</small></button>`).join('')
   }
-  const go = async (x) => { if (!x) return; mdl.close(); if (S.server !== x.s.id) await selectServer(x.s.id); selectChannel(x.c.id) }
+  const go = async (x) => {
+    if (!x) return
+    mdl.close()
+    if (x.dm) return openDM(x.dm)
+    if (S.mode !== 'server' || S.server !== x.s.id) await selectServer(x.s.id)
+    selectChannel(x.c.id)
+  }
   $('#qs-in', body).addEventListener('input', () => { idx = 0; draw() })
   $('#qs-in', body).addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') { idx = Math.min(found.length - 1, idx + 1); draw(); e.preventDefault() }
@@ -1530,7 +1615,6 @@ function lightbox (src) {
 // Olay bağlama
 // =====================================================================
 function bindStatic () {
-  // Biçim düğmelerine ikon yerleştir
   const fmtIcons = { '**': 'bold', '*': 'italic', '~~': 'strike', '||': 'eye', '`': 'code' }
   $$('[data-fmt]').forEach(b => { b.innerHTML = icon(fmtIcons[b.dataset.fmt], 18) })
   $('#btn-attach').innerHTML = icon('paperclip', 19)
@@ -1546,10 +1630,11 @@ function bindStatic () {
   const input = $('#input')
   input.addEventListener('input', onTyping)
   input.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' && !$('#cmd-hints').hidden) { e.preventDefault(); $('#cmd-hints .cmd')?.click(); return }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send() }
-    if (e.key === 'Escape') { if (S.editing) { S.editing = null; input.value = ''; autoGrow() } S.reply = null; renderComposerState(); renderMessages() }
+    if (e.key === 'Escape') { if (S.editing) { S.editing = null; input.value = ''; autoGrow() } S.reply = null; $('#cmd-hints').hidden = true; renderComposerState(); renderMessages() }
     if (e.key === 'ArrowUp' && !input.value) {
-      const mine = [...S.msgs].reverse().find(x => x.author === S.me && x.text)
+      const mine = [...S.msgs].reverse().find(x => x.author === S.me && x.text && !x.poll)
       if (mine) { e.preventDefault(); startEdit(mine.id) }
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') { e.preventDefault(); wrapSelection('**') }
@@ -1560,19 +1645,17 @@ function bindStatic () {
     if (files.length) { e.preventDefault(); addFiles(files) }
   })
 
-  // Sürükle-bırak
   let dragDepth = 0
-  window.addEventListener('dragenter', (e) => { if (e.dataTransfer?.types?.includes('Files') && S.channel) { dragDepth++; $('#drop-overlay').hidden = false } })
+  window.addEventListener('dragenter', (e) => { if (e.dataTransfer?.types?.includes('Files') && chatCtx()) { dragDepth++; $('#drop-overlay').hidden = false } })
   window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#drop-overlay').hidden = true } })
   window.addEventListener('dragover', (e) => e.preventDefault())
   window.addEventListener('drop', (e) => {
     e.preventDefault()
     dragDepth = 0
     $('#drop-overlay').hidden = true
-    if (S.channel && e.dataTransfer?.files?.length) addFiles([...e.dataTransfer.files])
+    if (chatCtx() && e.dataTransfer?.files?.length) addFiles([...e.dataTransfer.files])
   })
 
-  // Eski mesajları yükle
   $('#messages').addEventListener('scroll', async (e) => {
     const box = e.target
     box._stick = box.scrollHeight - box.scrollTop - box.clientHeight < 60
@@ -1589,11 +1672,10 @@ function bindStatic () {
     if (e.target.id === 'search') { S.search = e.target.value; renderMessages() }
   })
 
-  // Genel tıklama yönlendirmesi
   document.addEventListener('click', onClick)
   document.addEventListener('dblclick', (e) => {
     const t = e.target.closest('.tile')
-    if (t) { const v = $('video', t); (v || t).requestFullscreen?.() }
+    if (t && !t.classList.contains('music')) { const v = $('video', t); (v || t).requestFullscreen?.() }
   })
   document.addEventListener('mousedown', (e) => {
     if (!e.target.closest('.popup') && !e.target.closest('[data-act]') && !e.target.closest('#btn-emoji')) closePopup()
@@ -1632,8 +1714,19 @@ async function onClick (e) {
   }
   const act = a.dataset.act
   const id = a.dataset.id
+  const key = a.dataset.key
   switch (act) {
-    case 'server': if (id !== S.server) await selectServer(id); break
+    case 'home': goHome(); break
+    case 'home-friends': S.dm = null; renderAll(); break
+    case 'home-tab': S.homeTab = a.dataset.tab; if (S.homeTab === 'blocked') S.blocked = await api.blockedList(); S.dm = null; renderAll(); break
+    case 'home-add': S.mode = 'home'; S.dm = null; S.homeTab = 'add'; renderAll(); setTimeout(() => $('#af-code')?.focus(), 30); break
+    case 'open-dm': e.stopPropagation(); closePopup(); openDM(key); break
+    case 'friend-more': e.stopPropagation(); friendMoreMenu(key, a); break
+    case 'friend-add': case 'friend-accept': case 'friend-decline': case 'unblock': e.stopPropagation(); closePopup(); friendAction(act, key); break
+    case 'friend-send': sendFriendCode(); break
+    case 'copy-friend-code': copyText('yanki://arkadas/' + S.me, 'Arkadaş kodun kopyalandı — arkadaşına gönder!'); break
+    case 'copy-key': copyText('yanki://arkadas/' + key, 'Arkadaş kodu kopyalandı'); break
+    case 'server': if (S.mode !== 'server' || id !== S.server) await selectServer(id); break
     case 'add-server': case 'create-server': case 'join-server': openAddServer(); break
     case 'leave-server': leaveServer(); break
     case 'server-menu': serverMenu(a); break
@@ -1642,29 +1735,37 @@ async function onClick (e) {
     case 'new-channel': e.stopPropagation(); channelModal(null, a.dataset.cat); break
     case 'edit-channel': e.stopPropagation(); channelModal(id); break
     case 'edit-cat': categoryModal(id); break
-    case 'user': e.stopPropagation(); openProfileCard(a.dataset.key, a); break
+    case 'user': if (e.target.closest('.fr-actions')) break; e.stopPropagation(); openProfileCard(key, a); break
+    case 'bot': e.stopPropagation(); openBotCard(id, a); break
+    case 'bots-admin': closePopup(); openBotsModal(); break
     case 'my-profile': openProfileCard(S.me, a); break
     case 'settings': openSettings('profile'); break
-    case 'toggle-members': S.showMembers = !S.showMembers; save('showMembers', S.showMembers); renderMembers(); renderHeader(); break
+    case 'toggle-members': S.showMembers = !S.showMembers; save('showMembers', S.showMembers); renderLayout(); renderMembers(); renderHeader(); break
     case 'toggle-view':
-      if (voice.server !== S.server && voice.active) { await selectServer(voice.server) }
+      if (voice.active && (S.mode !== 'server' || voice.server !== S.server)) await selectServer(voice.server)
       S.view = S.view === 'stage' ? 'chat' : 'stage'
       renderAll()
       if (S.view === 'chat') { S._scrollBottomNext = true; renderMessages(true) }
       break
     case 'goto-voice':
-      if (voice.server !== S.server) await selectServer(voice.server)
+      if (S.mode !== 'server' || voice.server !== S.server) await selectServer(voice.server)
       S.view = 'stage'; renderAll(); break
-    case 'mute': voice.toggleMute(); break
-    case 'deafen': voice.toggleDeafen(); break
+    case 'mute': voice.toggleMute(); renderMeCard(); break
+    case 'deafen': voice.toggleDeafen(); renderMeCard(); break
     case 'camera': voice.toggleCamera(); break
     case 'screen': if (voice.screen) voice.stopScreen(); else openScreenPicker(); break
+    case 'music': openMusicPanel(a); break
+    case 'music-add': { const inp = $('#mp-url'); if (inp && await musicAdd(inp.value)) inp.value = ''; break }
+    case 'music-skip': musicSkip(); break
+    case 'music-stop': musicStop(); break
+    case 'music-remove': musicSkip(id); break
     case 'hangup': voice.leave(); S.view = 'chat'; S.focusTile = null; renderAll(); break
     case 'tile-full': { const t = a.closest('.tile'); ($('video', t) || t).requestFullscreen?.(); break }
     case 'pins': pinsPopup(a); break
     case 'open-link': e.preventDefault(); api.openExternal(a.dataset.url); break
     case 'spoiler': a.classList.add('revealed'); break
     case 'lightbox': lightbox(a.getAttribute('src')); break
+    case 'cmd-fill': { const t = $('#input'); t.value = a.dataset.cmd; t.focus(); renderCmdHints(); autoGrow(); break }
     case 'yt-play': {
       const vid = a.dataset.yt
       a.outerHTML = `<div class="embed yt playing"><iframe src="https://www.youtube-nocookie.com/embed/${vid}?autoplay=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" title="YouTube"></iframe></div>`
@@ -1676,7 +1777,8 @@ async function onClick (e) {
     case 'edit': startEdit(id); break
     case 'copy': { const msg = S.msgs.find(x => x.id === id); if (msg) copyText(msg.text); break }
     case 'delete':
-      if (e.shiftKey || await confirmModal('Mesajı sil', 'Bu mesaj herkes için silinecek. (İpucu: Shift+tık ile onaysız sil)', 'Sil')) await api.post(S.server, 'message-delete', { target: id })
+      if (e.shiftKey || await confirmModal('Mesajı sil', 'Bu mesaj herkes için silinecek. (İpucu: Shift+tık ile onaysız sil)', 'Sil')) await postCtx('message-delete', { target: id })
+      if (S.mode === 'home') loadMessages()
       break
     case 'pin': {
       const ch = curMeta()?.channels.find(c => c.id === S.channel)
@@ -1686,10 +1788,18 @@ async function onClick (e) {
     case 'react': {
       const msg = S.msgs.find(x => x.id === id)
       const on = !(msg?.reactions?.[a.dataset.emoji] || []).includes(S.me)
-      await api.post(S.server, 'reaction', { target: id, emoji: a.dataset.emoji, on })
+      await postCtx('reaction', { target: id, emoji: a.dataset.emoji, on })
+      if (S.mode === 'home') loadMessages()
       break
     }
-    case 'react-pick': emojiPicker(a, (em) => { const msg = S.msgs.find(x => x.id === id); const on = !(msg?.reactions?.[em] || []).includes(S.me); api.post(S.server, 'reaction', { target: id, emoji: em, on }) }); break
+    case 'vote': {
+      const msg = S.msgs.find(x => x.id === id)
+      const opt = +a.dataset.opt
+      await postCtx('poll-vote', { target: id, option: msg?.poll?.mine === opt ? -1 : opt })
+      if (S.mode === 'home') loadMessages()
+      break
+    }
+    case 'react-pick': emojiPicker(a, async (em) => { const msg = S.msgs.find(x => x.id === id); const on = !(msg?.reactions?.[em] || []).includes(S.me); await postCtx('reaction', { target: id, emoji: em, on }); if (S.mode === 'home') loadMessages() }); break
     case 'jump': {
       closePopup()
       const node = $(`.msg[data-id="${CSS.escape(id)}"]`)
@@ -1701,9 +1811,10 @@ async function onClick (e) {
 }
 
 function onContext (e) {
-  const msgNode = e.target.closest('.msg')
+  const msgNode = e.target.closest('.msg[data-id]')
   const ch = e.target.closest('.ch')
   const srv = e.target.closest('.rail-item[data-id]')
+  const userEl = e.target.closest('[data-act="user"], [data-act="open-dm"]')
   if (msgNode) {
     e.preventDefault()
     const id = msgNode.dataset.id
@@ -1713,18 +1824,25 @@ function onContext (e) {
       { label: 'Yanıtla', icon: 'reply', onClick: () => { S.reply = id; renderComposerState(); $('#input').focus() } },
       { label: 'Metni kopyala', icon: 'copy', onClick: () => copyText(msg.text) }
     ]
-    if (msg.author === S.me) items.push({ label: 'Düzenle', icon: 'edit', onClick: () => startEdit(id) })
-    if (msg.author === S.me || curMeta()?.isAdmin) items.push('-', { label: 'Sil', icon: 'trash', danger: true, onClick: () => api.post(S.server, 'message-delete', { target: id }) })
-    const anchor = { getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY }), closest: () => null }
-    menu(items, anchor, { align: 'below' })
-  } else if (ch && curMeta()?.isAdmin) {
+    if (msg.author === S.me && !msg.poll) items.push({ label: 'Düzenle', icon: 'edit', onClick: () => startEdit(id) })
+    if (msg.author === S.me || curMeta()?.isAdmin) items.push('-', { label: 'Sil', icon: 'trash', danger: true, onClick: () => postCtx('message-delete', { target: id }).then(() => S.mode === 'home' && loadMessages()) })
+    menu(items, pointAnchor(e), { align: 'below' })
+  } else if (userEl && userEl.dataset.key && userEl.dataset.key !== S.me) {
     e.preventDefault()
-    const anchor = { getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY }), closest: () => null }
-    menu([{ label: 'Kanalı düzenle', icon: 'settings', onClick: () => channelModal(ch.dataset.id) }], anchor, { align: 'below' })
+    const key = userEl.dataset.key
+    const st = friendStatusOf(key)
+    const items = [{ label: 'Mesaj gönder', icon: 'chat', onClick: () => openDM(key) }]
+    if (st === 'none') items.push({ label: 'Arkadaş ekle', icon: 'userPlus', onClick: () => friendAction('friend-add', key) })
+    if (st === 'incoming') items.push({ label: 'İsteği kabul et', icon: 'check', onClick: () => friendAction('friend-accept', key) })
+    if (st === 'friends') items.push({ label: 'Arkadaşlıktan çıkar', icon: 'userX', danger: true, onClick: () => friendAction('friend-remove', key) })
+    items.push('-', { label: 'Engelle', icon: 'ban', danger: true, onClick: () => friendAction('block', key) })
+    menu(items, pointAnchor(e), { align: 'below' })
+  } else if (ch && S.mode === 'server' && curMeta()?.isAdmin) {
+    e.preventDefault()
+    menu([{ label: 'Kanalı düzenle', icon: 'settings', onClick: () => channelModal(ch.dataset.id) }, { label: 'Botlar', icon: 'bot', onClick: openBotsModal }], pointAnchor(e), { align: 'below' })
   } else if (srv) {
     e.preventDefault()
-    const anchor = { getBoundingClientRect: () => ({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY }), closest: () => null }
-    menu([{ label: 'Davet kodunu kopyala', icon: 'link', onClick: () => copyText('yanki://' + srv.dataset.id, 'Davet kodu kopyalandı') }], anchor, { align: 'below' })
+    menu([{ label: 'Davet kodunu kopyala', icon: 'link', onClick: () => copyText('yanki://' + srv.dataset.id, 'Davet kodu kopyalandı') }], pointAnchor(e), { align: 'below' })
   }
 }
 

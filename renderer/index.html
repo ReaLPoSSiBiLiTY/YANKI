@@ -4,27 +4,33 @@
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: mediastream: data:; frame-src https://www.youtube-nocookie.com https://www.youtube.com; connect-src 'self'; font-src 'self' data:">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Yankı</title>
+  <title>YANKI</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="wall"></div>
   <div id="app">
     <nav id="rail" aria-label="Sunucular"></nav>
 
-    <aside id="sidebar">
-      <header id="server-header"></header>
-      <div id="channels"></div>
+    <aside id="sidebar" class="panel">
+      <header id="side-head"></header>
+      <div id="side-body"></div>
+      <div id="voice-card" hidden></div>
+      <footer id="me-card"></footer>
     </aside>
 
-    <main id="main">
+    <main id="main" class="panel">
       <header id="chan-header"></header>
+      <section id="home" hidden></section>
       <section id="stage" hidden></section>
       <section id="chat">
         <div id="messages" tabindex="-1"></div>
         <div id="typing"></div>
         <footer id="composer">
+          <div id="cmd-hints" hidden></div>
           <div id="reply-bar" hidden></div>
           <div id="attach-preview"></div>
+          <div id="dm-lock" hidden></div>
           <div class="composer-box">
             <textarea id="input" rows="1" maxlength="4000" placeholder="Mesaj gönder"></textarea>
             <div class="composer-tools">
@@ -36,7 +42,7 @@
                 <button class="tool" data-fmt="`" title="Kod"></button>
               </div>
               <div class="actions">
-                <button class="tool" id="btn-attach" title="Resim ekle"></button>
+                <button class="tool" id="btn-attach" title="Resim / GIF ekle"></button>
                 <button class="tool" id="btn-emoji" title="Emoji"></button>
                 <button class="tool send" id="btn-send" title="Gönder (Enter)"></button>
               </div>
@@ -46,20 +52,24 @@
         </footer>
       </section>
       <section id="empty" hidden></section>
+      <div id="dock" hidden></div>
     </main>
 
-    <aside id="members"></aside>
-
-    <footer id="bottombar"></footer>
+    <aside id="members" class="panel"></aside>
   </div>
 
+  <div id="music-host"></div>
   <div id="popup-root"></div>
   <div id="modal-root"></div>
   <div id="toast" role="status"></div>
-  <div id="drop-overlay" hidden><div>Resmi bırakarak kanala gönder</div></div>
+  <div id="drop-overlay" hidden><div>Resmi bırakarak gönder</div></div>
 
   <script src="icons.js"></script>
+  <script src="themes.js"></script>
   <script src="rtc.js"></script>
+  <script src="core.js"></script>
+  <script src="bots.js"></script>
+  <script src="social.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
