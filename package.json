@@ -1,7 +1,7 @@
 {
   "name": "yanki",
   "productName": "YANKI",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "YANKI",
   "main": "main.js",
   "author": "YANKI",
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "start:2": "electron . --profile=ikinci",
-    "test": "node test/p2p.test.js",
+    "test": "node test/unit.test.js && node test/p2p.test.js",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac"
@@ -40,6 +40,13 @@
       "target": [
         {
           "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
           "arch": [
             "arm64",
             "x64"
@@ -83,5 +90,12 @@
     },
     "copyright": "Copyright © 2026 YANKI",
     "executableName": "YANKI"
+  },
+  "yanki": {
+    "updateRepo": "ReaLPoSSiBiLiTY/YANKI"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ReaLPoSSiBiLiTY/YANKI"
   }
 }

@@ -13,7 +13,7 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const { EventEmitter } = require('events')
-const { derive, deriveDM, musicState, OP_TYPES, DM_TYPES, BOTS, sanitizeProfile } = require('./state')
+const { derive, deriveDM, applyServerOp, applyDMOp, musicState, allowedIn, isPrivate, after, OP_TYPES, DM_TYPES, BOTS, sanitizeProfile } = require('./state')
 const identity = require('./identity')
 
 const HEX64 = /^[0-9a-f]{64}$/
@@ -30,6 +30,7 @@ const canonical = (op) => JSON.stringify([1, op.type, op.server, op.author, op.t
 const opId = (op) => sha256(canonical(op)).toString('hex')
 const topicFor = (serverId) => sha256('yanki/v1/server/' + serverId)
 const dmIdFor = (a, b) => sha256('yanki/v1/dm/' + [a, b].sort().join(':')).toString('hex')
+const KEY_TYPES = new Set(['member-join', 'member-key', 'group-member', 'group-update', 'channel-create', 'channel-update', 'channel-key', 'role-set', 'kick', 'ban'])
 const DM_MSG = new Set(['dm', 'dm-edit', 'dm-delete', 'dm-reaction', 'poll-vote'])
 
 function sanitizeActivity (a) {
@@ -51,10 +52,11 @@ function sanitizeActivity (a) {
  * diskten silinir, yalnızca kimlikleri saklanır ki eşler onları tekrar göndermesin.
  */
 class OpStore {
-  constructor (dir, id, deriveFn) {
+  constructor (dir, id, deriveFn, applyFn) {
     this.dir = dir
     this.id = id
     this.deriveFn = deriveFn
+    this.applyFn = applyFn
     this.file = path.join(dir, 'ops.ndjson')
     this.prunedFile = path.join(dir, 'pruned.txt')
     this.ops = new Map()
@@ -119,9 +121,14 @@ class OpStore {
     const kept = this._track(op)
     if (kept) fs.appendFileSync(this.file, JSON.stringify(op) + '\n')
     this._savePruned()
-    this._state = undefined
+    // Artımlı güncelleme: op günlüğün sonuna geliyorsa yalnızca onu uygula
+    const st = this._state
+    if (kept && st && this.applyFn && op.type !== 'channel-key' && op.type !== 'genesis' && after(op, st.last)) this.applyFn(st, op)
+    else if (kept || op.type === 'profile') this._state = undefined
     return kept
   }
+
+  invalidate () { this._state = undefined }
 
   get state () {
     if (this._state === undefined) this._state = this.deriveFn(this.ops.values())
@@ -155,15 +162,30 @@ class P2PNode extends EventEmitter {
   async start () {
     fs.mkdirSync(this.dir, { recursive: true })
     const idFile = path.join(this.dir, 'identity.json')
-    let seed
-    if (fs.existsSync(idFile)) {
-      seed = Buffer.from(JSON.parse(fs.readFileSync(idFile, 'utf8')).seed, 'hex')
-    } else {
-      seed = crypto.randomBytes(32)
-      fs.writeFileSync(idFile, JSON.stringify({ seed: seed.toString('hex') }), { mode: 0o600 })
+    let saved = null
+    try { saved = JSON.parse(fs.readFileSync(idFile, 'utf8')) } catch {}
+    if (!saved || !saved.seed) saved = { seed: crypto.randomBytes(32).toString('hex') }
+    if (!saved.xseed) {
+      // v1.2: özel kanallar için ayrı bir X25519 şifreleme anahtarı
+      saved.xseed = crypto.randomBytes(32).toString('hex')
+      fs.writeFileSync(idFile, JSON.stringify(saved), { mode: 0o600 })
     }
-    this.id = identity.fromSeed(seed)
+    this.id = identity.fromSeed(Buffer.from(saved.seed, 'hex'))
+    this.x = identity.xFromSeed(Buffer.from(saved.xseed, 'hex'))
+    this.xpub = this.x.publicRaw.toString('base64')
     this.me = this.id.publicKey.toString('hex')
+    this._hooks = {
+      me: this.me,
+      openShare: (sealed, check) => {
+        const key = identity.openKey(this.x, sealed)
+        return key && key.length === 32 && identity.keyCheck(key) === check ? key : null
+      },
+      decrypt: (key, enc, aad) => {
+        const plain = identity.aesOpen(key, enc, aad)
+        if (!plain) return null
+        try { const o = JSON.parse(plain.toString('utf8')); return o && typeof o === 'object' ? o : null } catch { return null }
+      }
+    }
 
     this.profileFile = path.join(this.dir, 'profile.json')
     this.profile = { name: '', avatar: null, banner: null, bio: '', status: '', pronouns: '', color: '#ff4f8b' }
@@ -194,6 +216,7 @@ class P2PNode extends EventEmitter {
     try { const r = this.swarm.listen?.(); if (r && r.catch) r.catch(() => {}) } catch {}
     for (const id of this.servers.keys()) this._joinTopic(id)
     this._syncFriendWants()
+    for (const id of this.servers.keys()) { this._publishKey(id); this._scheduleKeys(id) }
 
     this._timer = setInterval(() => this._tick(), PRESENCE_MS)
     this._timer.unref?.()
@@ -202,17 +225,17 @@ class P2PNode extends EventEmitter {
 
   async destroy () {
     clearInterval(this._timer)
-    for (const p of this.peers.values()) { try { p.conn.destroy() } catch {} }
+    for (const p of this.peers.values()) for (const c of p.conns) { try { c.destroy() } catch {} }
     try { await this.swarm.destroy() } catch {}
   }
 
   _serverStore (id) {
-    return new OpStore(path.join(this.dir, 'servers', id), id, (ops) => derive(id, ops))
+    return new OpStore(path.join(this.dir, 'servers', id), id, (ops) => derive(id, ops, this._hooks), applyServerOp)
   }
 
   _dmStoreFor (key) {
     const dmId = dmIdFor(this.me, key)
-    return new OpStore(path.join(this.dir, 'dms', key), dmId, (ops) => deriveDM(dmId, this.me, key, ops))
+    return new OpStore(path.join(this.dir, 'dms', key), dmId, (ops) => deriveDM(dmId, this.me, key, ops), applyDMOp)
   }
 
   // ---------- Op oluşturma ve doğrulama ----------
@@ -283,6 +306,7 @@ class P2PNode extends EventEmitter {
     add('bot-config', { bot: 'welcome', enabled: true, channels: [genelCh] })
     add('bot-config', { bot: 'dice', enabled: true, channels: [genelCh] })
     add('bot-config', { bot: 'music', enabled: true, channels: [sesCh] })
+    add('member-key', { x: this.xpub })
     this._joinTopic(id)
     this._rehelloAll()
     this.emit('servers', this.listServers())
@@ -296,6 +320,7 @@ class P2PNode extends EventEmitter {
       this.servers.set(serverId, store)
       store.add(this._createOp(serverId, 'member-join', {}))
       if (this.profile.name) store.add(this._createOp(serverId, 'profile', this.profile))
+      store.add(this._createOp(serverId, 'member-key', { x: this.xpub }))
       this._joinTopic(serverId)
       this._rehelloAll()
     }
@@ -318,11 +343,78 @@ class P2PNode extends EventEmitter {
     const store = this.servers.get(serverId)
     if (!store) throw new Error('Sunucu bulunamadı')
     if (!OP_TYPES.has(type) || type === 'genesis') throw new Error('Geçersiz işlem')
+    const st = store.state
+    // Özel kanal: mesaj ve düzenlemeler kanal anahtarıyla şifrelenir
+    if (st && (type === 'message' || type === 'message-edit')) {
+      const channel = type === 'message' ? data?.channel : st.msgIndex.get(data?.target)?.channel
+      if (channel && isPrivate(st, channel)) data = this._encryptFor(st, channel, data, type)
+    }
     const op = this._createOp(serverId, type, data)
     store.add(op)
     this._broadcastOps(serverId, [op], null)
     this._emitOps(serverId, [op])
+    if (KEY_TYPES.has(type)) this._scheduleKeys(serverId)
     return op.id
+  }
+
+  _encryptFor (st, channel, data, type) {
+    const epoch = st.curEpoch.get(channel)
+    const key = epoch && st.keys.get(epoch)
+    if (!key) throw new Error('Bu özel kanalın şifreleme anahtarı henüz sana ulaşmadı. Bir yönetici çevrim içi olduğunda otomatik gelir.')
+    const { channel: _c, target, ...rest } = data
+    const enc = { e: epoch, ...identity.aesSeal(key, Buffer.from(JSON.stringify(rest)), channel + ':' + epoch) }
+    return type === 'message' ? { channel, enc } : { target, enc }
+  }
+
+  // Bu sunucuda şifreleme anahtarımı yayımla (bir kez)
+  _publishKey (serverId) {
+    const st = this.servers.get(serverId)?.state
+    if (!st || !st.members.has(this.me) || st.xkeys.get(this.me) === this.xpub) return
+    try { this.post(serverId, 'member-key', { x: this.xpub }) } catch {}
+  }
+
+  _scheduleKeys (serverId) {
+    if (!this._keyTimers) this._keyTimers = new Map()
+    if (this._keyTimers.has(serverId)) return
+    // Birden fazla anahtar sahibi aynı anda pay yazmasın diye küçük rastgele gecikme
+    const t = setTimeout(() => { this._keyTimers.delete(serverId); try { this._reconcileKeys(serverId) } catch (e) { this.emit('error', e) } }, 300 + Math.random() * 1500)
+    t.unref?.()
+    this._keyTimers.set(serverId, t)
+  }
+
+  /*
+   * Özel kanal anahtarlarını güncel tut:
+   * - Yönetici: kanalın henüz anahtarı yoksa ya da erişimi kaldırılmış biri anahtara sahipse
+   *   yeni bir anahtar kuşağı oluşturur (eski üye yeni mesajları okuyamaz).
+   * - Anahtarı olan herkes: erişimi olup henüz payı olmayan üyelere pay ekler.
+   */
+  _reconcileKeys (serverId) {
+    const store = this.servers.get(serverId)
+    const st = store?.state
+    if (!st || !st.members.has(this.me)) return
+    if (st.xkeys.get(this.me) !== this.xpub) this._publishKey(serverId)
+    const amAdmin = st.admins.has(this.me)
+    for (const ch of st.channels.values()) {
+      if (!ch.groups.length || !allowedIn(st, ch.id, this.me)) continue
+      const allowed = [...st.members.keys()].filter(u => allowedIn(st, ch.id, u) && st.xkeys.has(u))
+      const epId = st.curEpoch.get(ch.id)
+      const ep = epId && st.epochs.get(ch.id).get(epId)
+      const stale = ep && [...ep.recipients].some(u => !allowedIn(st, ch.id, u) || !st.members.has(u))
+      if (amAdmin && (!ep || stale)) {
+        const key = crypto.randomBytes(32)
+        const shares = {}
+        for (const u of allowed) shares[u] = identity.sealKey(st.xkeys.get(u), key)
+        this.post(serverId, 'channel-key', { channel: ch.id, epoch: 'new', check: identity.keyCheck(key), shares })
+        continue
+      }
+      const key = ep && st.keys.get(ep.id)
+      if (!key || !ep.recipients.has(this.me)) continue
+      const missing = allowed.filter(u => !ep.recipients.has(u))
+      if (!missing.length) continue
+      const shares = {}
+      for (const u of missing) shares[u] = identity.sealKey(st.xkeys.get(u), key)
+      this.post(serverId, 'channel-key', { channel: ch.id, epoch: ep.id, shares })
+    }
   }
 
   setProfile (p) {
@@ -361,11 +453,17 @@ class P2PNode extends EventEmitter {
     if (!s) return { id: serverId, pending: true, me: this.me, peers: this._peerCount(serverId) }
     const online = this.onlineSet(serverId)
     const now = Date.now()
-    const channels = [...s.channels.values()].map(c => {
+    const amAdmin = s.admins.has(this.me)
+    const channels = [...s.channels.values()].filter(c => amAdmin || allowedIn(s, c.id, this.me)).map(c => {
       const list = s.messages.get(c.id) || []
       let last = null
       for (let i = list.length - 1; i >= 0; i--) if (!list[i].deleted) { last = list[i]; break }
-      const out = { ...c, lastTs: last ? last.ts : 0, lastAuthor: last ? last.author : null, pins: [...(s.pins.get(c.id) || [])] }
+      const priv = c.groups.length > 0
+      const out = {
+        ...c, groups: [...c.groups], lastTs: last ? last.ts : 0, lastAuthor: last ? last.author : null, pins: [...(s.pins.get(c.id) || [])],
+        private: priv, allowed: allowedIn(s, c.id, this.me),
+        hasKey: !priv || !!(s.curEpoch.get(c.id) && s.keys.get(s.curEpoch.get(c.id)))
+      }
       if (c.kind === 'voice' && s.music.has(c.id)) {
         const ms = musicState(s.music.get(c.id), now)
         out.music = ms.playing ? { title: ms.playing.video.title, id: ms.playing.video.id } : null
@@ -379,8 +477,11 @@ class P2PNode extends EventEmitter {
       profile: s.profiles.get(key) || null,
       owner: key === s.owner,
       admin: s.admins.has(key),
-      online: online.has(key)
+      online: online.has(key),
+      groups: [...s.groups.values()].filter(g => g.members.has(key)).map(g => g.id),
+      canEncrypt: s.xkeys.has(key)
     }))
+    const groups = [...s.groups.values()].sort((a, b) => a.order - b.order).map(g => ({ id: g.id, name: g.name, color: g.color, members: [...g.members] }))
     const bots = Object.keys(BOTS).map(id => {
       const b = s.bots.get(id)
       return { id, kind: BOTS[id].kind, enabled: !!(b && b.enabled), channels: b ? [...b.channels] : [] }
@@ -388,7 +489,7 @@ class P2PNode extends EventEmitter {
     return {
       id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description,
       owner: s.owner, me: this.me, isAdmin: s.admins.has(this.me), createdAt: s.createdAt,
-      categories, channels, members, bots,
+      categories, channels, members, bots, groups,
       banned: [...s.banned].map(k => ({ key: k, profile: s.profiles.get(k) || null })),
       peers: this._peerCount(serverId)
     }
@@ -408,11 +509,16 @@ class P2PNode extends EventEmitter {
       if (m.poll) {
         const counts = m.poll.options.map(() => 0)
         for (const v of m.poll.votes.values()) counts[v]++
-        poll = { question: m.poll.question, options: m.poll.options, counts, total: m.poll.votes.size, mine: m.poll.votes.has(this.me) ? m.poll.votes.get(this.me) : -1 }
+        poll = { question: m.poll.question, options: m.poll.options, counts, total: m.poll.votes.size, mine: m.poll.votes.has(this.me) ? m.poll.votes.get(this.me) : -1, public: !!m.poll.public }
+        // Açık ankette kim neye oy verdi
+        if (m.poll.public) {
+          poll.voters = m.poll.options.map(() => [])
+          for (const [u, v] of m.poll.votes) poll.voters[v].push(u)
+        }
       }
       return {
         id: m.id, channel: m.channel, author: m.author, ts: m.ts, text: m.text, attachments: m.attachments,
-        replyTo: m.replyTo, edited: m.edited, reactions: m.reactions, bot: m.bot, poll, reply
+        replyTo: m.replyTo, edited: m.edited, reactions: m.reactions, bot: m.bot, poll, reply, locked: !!m.locked
       }
     })
   }
@@ -517,7 +623,7 @@ class P2PNode extends EventEmitter {
     this.wantPeer(key, 'friend', false)
     this.wantPeer(key, 'dm', false)
     const p = this.peers.get(key)
-    if (p) { try { p.conn.destroy() } catch {} }
+    if (p) for (const c of [...p.conns]) { try { c.destroy() } catch {} }
     this.emit('friends')
   }
 
@@ -690,20 +796,32 @@ class P2PNode extends EventEmitter {
   _onConnection (conn) {
     const key = Buffer.from(conn.remotePublicKey).toString('hex')
     if (key === this.me || this.blocked.has(key)) { conn.destroy(); return }
-    const peer = {
-      key,
-      conn,
-      shared: new Set(),
-      dmReplied: false,
-      send: (m) => { try { if (!conn.destroyed) conn.write(JSON.stringify(m) + '\n') } catch {} }
+    // Aynı kişiyle birden fazla bağlantı olabilir (konu + doğrudan istek). Eskisini biz
+    // kapatmıyoruz: Hyperswarm yinelenen bağlantıyı kendisi ayıklar. Mesajlar en yeni açık
+    // bağlantıdan gider; biri kapanınca diğeriyle devam edilir.
+    let peer = this.peers.get(key)
+    const isNew = !peer
+    if (!peer) {
+      peer = {
+        key,
+        conns: [],
+        shared: new Set(),
+        dmReplied: false,
+        get conn () { return this.conns[this.conns.length - 1] },
+        send: (m) => {
+          const c = peer.conns[peer.conns.length - 1]
+          try { if (c && !c.destroyed) c.write(JSON.stringify(m) + '\n') } catch {}
+        }
+      }
+      this.peers.set(key, peer)
     }
-    const old = this.peers.get(key)
-    this.peers.set(key, peer)
-    if (old && old.conn !== conn) { try { old.conn.destroy() } catch {} }
+    peer.conns.push(conn)
 
     conn.on('error', () => {})
     conn.on('close', () => {
-      if (this.peers.get(key) !== peer) return
+      const i = peer.conns.indexOf(conn)
+      if (i >= 0) peer.conns.splice(i, 1)
+      if (peer.conns.length || this.peers.get(key) !== peer) return
       this.peers.delete(key)
       this.emit('peers', [...peer.shared])
       if (this.dms.has(key)) this.emit('friends')
@@ -728,6 +846,7 @@ class P2PNode extends EventEmitter {
         if (pendingLen > MAX_LINE) conn.destroy()
       }
     })
+    if (!isNew) { this._flushSignals(peer); return }
     this._sendHello(peer, false)
 
     // Özel alan eşitlemesi
@@ -737,12 +856,15 @@ class P2PNode extends EventEmitter {
       if (this.activity) peer.send({ t: 'act', d: this.activity })
       this.emit('friends')
     }
-    // Bu eşe bekleyen WebRTC sinyalleri
-    const q = this.sigQueue.get(key)
-    if (q) {
-      this.sigQueue.delete(key)
-      for (const m of q) if (Date.now() - m.at < SIG_QUEUE_MS) peer.send(m)
-    }
+    this._flushSignals(peer)
+  }
+
+  // Bu eşe bekleyen WebRTC sinyallerini gönder
+  _flushSignals (peer) {
+    const q = this.sigQueue.get(peer.key)
+    if (!q) return
+    this.sigQueue.delete(peer.key)
+    for (const m of q) if (Date.now() - m.at < SIG_QUEUE_MS) peer.send(m)
   }
 
   // Sunucu kimlikleri eş çiftine özgü bir özetle gizlenir: karşı taraf,
@@ -800,6 +922,7 @@ class P2PNode extends EventEmitter {
           this._emitOps(m.s, fresh)
           if (fresh.some(o => o.type === 'genesis' || o.type === 'server-update')) this.emit('servers', this.listServers())
           if (fresh.some(o => o.type === 'ban')) this._dropBanned(m.s)
+          if (fresh.some(o => KEY_TYPES.has(o.type) || o.type === 'genesis')) { this._publishKey(m.s); this._scheduleKeys(m.s) }
         }
         return
       }
@@ -870,14 +993,20 @@ class P2PNode extends EventEmitter {
   }
 
   _emitOps (serverId, ops) {
+    const st = this.servers.get(serverId)?.state
     this.emit('ops', {
       server: serverId,
-      ops: ops.map(o => ({
-        id: o.id, type: o.type, author: o.author, ts: o.ts,
-        channel: o.data && typeof o.data.channel === 'string' ? o.data.channel : null,
-        text: o.type === 'message' && o.data ? String(o.data.text || '').slice(0, 200) : undefined,
-        hasImage: o.type === 'message' && Array.isArray(o.data?.attachments) && o.data.attachments.length > 0
-      }))
+      ops: ops.map(o => {
+        // Şifreli (özel kanal) mesajlarda metin, çözülmüş durumdan alınır
+        const m = o.type === 'message' ? st?.msgIndex.get(o.id) : null
+        return {
+          id: o.id, type: o.type, author: o.author, ts: o.ts,
+          channel: m ? m.channel : o.data && typeof o.data.channel === 'string' ? o.data.channel : null,
+          text: o.type === 'message' ? String((m ? m.text : o.data?.text) || '').slice(0, 300) : undefined,
+          hasImage: o.type === 'message' && (m ? m.attachments.length > 0 : Array.isArray(o.data?.attachments) && o.data.attachments.length > 0),
+          locked: !!m?.locked
+        }
+      })
     })
   }
 

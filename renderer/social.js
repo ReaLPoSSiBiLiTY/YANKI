@@ -43,7 +43,7 @@ function renderHomeSidebar () {
         ${avatarFull(d.key, 34, { online: d.online })}
         <span class="dm-text">
           <span class="dm-name" ${colorOf(d.key) ? `style="color:${colorOf(d.key)}"` : ''}>${esc(nameOf(d.key))}</span>
-          ${actLine(d.key) || `<span class="dm-last">${d.lastAuthor === S.me ? 'Sen: ' : ''}${esc(d.lastText)}</span>`}
+          ${actLine(d.key) || `<span class="dm-last">${d.lastAuthor === S.me ? 'Sen: ' : ''}${esc(window.plainText ? window.plainText(d.lastText) : d.lastText)}</span>`}
         </span>
       </button>`).join('') : '<div class="side-empty muted small">Henüz özel mesaj yok. Bir arkadaşının yanındaki sohbet simgesine tıkla.</div>'}`
 }

@@ -33,6 +33,11 @@ contextBridge.exposeInMainWorld('yanki', {
   activityConfig: (cfg) => inv('activity:config', cfg),
   activityCurrent: () => inv('activity:current'),
   activities: () => inv('activity:all'),
+  updateCheck: () => inv('update:check'),
+  updateDownload: () => inv('update:download'),
+  updateInstall: () => inv('update:install'),
+  updatePage: () => inv('update:page'),
+  updateInfo: () => inv('update:info'),
 
   on: (cb) => {
     const h = (_e, ev) => cb(ev)

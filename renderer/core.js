@@ -107,13 +107,14 @@ const settings = Object.assign({
   allowEchoAudio: false,
   notify: 'mentions', // 'all' | 'mentions' | 'none'
   sounds: true,
+  mentionSound: true,
   linkPreviews: true,
   musicVolume: 60,
   turnUrl: '',
   turnUser: '',
   turnPass: ''
 }, load('settings', {}))
-settings.theme = Object.assign({ id: 'yanki', dim: 45, blur: 0, glass: 30 }, settings.theme || {})
+settings.theme = Object.assign({ id: 'yanki', dim: 45, blur: 0, glass: 30, mode: 'dark', perf: false }, settings.theme || {})
 settings.activity = Object.assign({ enabled: true, custom: [] }, settings.activity || {})
 const saveSettings = () => save('settings', settings)
 
@@ -201,6 +202,8 @@ function md (text) {
   let s = esc(text)
   s = s.replace(/```(?:[a-z0-9]+\n)?([\s\S]*?)```/gi, (_, c) => { codes.push(`<pre class="code-block"><code>${c.replace(/^\n/, '')}</code></pre>`); return `\u0000${codes.length - 1}\u0000` })
   s = s.replace(/`([^`\n]+)`/g, (_, c) => { codes.push(`<code class="code-inline">${c}</code>`); return `\u0000${codes.length - 1}\u0000` })
+  // <@anahtar> biçimindeki bahsetmeler (esc sonrası &lt;@…&gt;)
+  s = s.replace(/&lt;@([0-9a-f]{64})&gt;/g, (_, k) => { codes.push(`<span class="mention ${k === S.me ? 'me' : ''}" data-act="user" data-key="${k}">@${esc(nameOf(k))}</span>`); return `\u0000${codes.length - 1}\u0000` })
   s = s.replace(URL_RE, (u) => { codes.push(`<a href="${u}" class="link" data-act="open-link" data-url="${u}">${u}</a>`); return `\u0000${codes.length - 1}\u0000` })
   s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
   s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
@@ -210,8 +213,9 @@ function md (text) {
   s = s.replace(/^&gt; (.*)$/gm, '<span class="quote">$1</span>')
   s = s.replace(/(^|\s)@([\p{L}\p{N}_.-]{2,32})/gu, (all, pre, name) => {
     const me = S.profile.name && name.toLowerCase() === S.profile.name.toLowerCase()
-    const known = me || name === 'everyone' || name === 'herkes' || knownName(name)
-    return known ? `${pre}<span class="mention ${me ? 'me' : ''}">@${name}</span>` : all
+    const everyone = name === 'everyone' || name === 'herkes'
+    const known = me || everyone || knownName(name)
+    return known ? `${pre}<span class="mention ${me || everyone ? 'me' : ''} ${everyone ? 'all' : ''}">@${name}</span>` : all
   })
   s = s.replace(/\n/g, '<br>')
   s = s.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[+i])
@@ -219,8 +223,10 @@ function md (text) {
 }
 
 const mentionsMe = (text) => {
+  if (!text) return false
+  if (text.includes('<@' + S.me + '>') || /(^|\s)@(everyone|herkes)(?![\p{L}\p{N}_])/u.test(text)) return true
   const n = S.profile.name
-  return !!text && ((n && text.toLowerCase().includes('@' + n.toLowerCase())) || /@(everyone|herkes)\b/.test(text))
+  return !!n && new RegExp('(^|\\s)@' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\p{L}\\p{N}_])', 'iu').test(text)
 }
 
 // =====================================================================

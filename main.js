@@ -4,6 +4,8 @@ const path = require('path')
 const fs = require('fs')
 const { P2PNode } = require('./src/p2p/node')
 const { ActivityDetector } = require('./src/activity')
+const { Updater } = require('./src/updater')
+const UPDATE_REPO = (require('./package.json').yanki || {}).updateRepo || 'ReaLPoSSiBiLiTY/YANKI'
 
 const APP_NAME = 'YANKI'
 app.setName(APP_NAME)
@@ -41,6 +43,7 @@ if (process.platform === 'win32') app.setAppUserModelId('app.yanki.desktop')
 let win = null
 let node = null
 let activity = null
+let updater = null
 let pendingShare = null
 
 function send (ev) {
@@ -152,6 +155,13 @@ function registerIpc () {
   h('activity:config', (cfg) => { activity.configure(cfg || {}); return activity.current })
   h('activity:current', () => activity.current)
   h('activity:all', () => node.activities())
+
+  // Güncelleme
+  h('update:check', () => updater.check().catch(e => ({ status: 'error', reason: e.message })))
+  h('update:download', () => updater.download())
+  h('update:install', () => updater.install())
+  h('update:page', () => updater.openPage())
+  h('update:info', () => updater.info)
 
   h('desktop:sources', async () => {
     const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 384, height: 216 }, fetchWindowIcons: true })
@@ -303,6 +313,13 @@ app.whenReady().then(async () => {
   registerIpc()
   createWindow()
   activity.start()
+
+  updater = new Updater(app, net, shell, UPDATE_REPO)
+  updater.on('available', info => send({ type: 'update-available', info }))
+  updater.on('progress', p => send({ type: 'update-progress', ...p }))
+  const autoCheck = () => updater.check().catch(() => {})
+  setTimeout(autoCheck, 8000)
+  setInterval(autoCheck, 4 * 60 * 60 * 1000)
 
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })

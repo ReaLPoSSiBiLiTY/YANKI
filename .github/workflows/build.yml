@@ -2,8 +2,8 @@ name: Derle (Windows + macOS)
 
 # Çalıştırma yolları:
 #  1) Actions sekmesinden "Run workflow"  → dosyalar Artifacts bölümüne gelir
-#  2) v ile başlayan bir etiket (tag) gönderildiğinde (ör. v1.0.0)
-#     → dosyalar ayrıca "Releases" indirme sayfasında yayınlanır
+#  2) v ile başlayan bir etiket (tag) gönderildiğinde (ör. v1.2.0)
+#     → dosyalar "Releases" sayfasında yayınlanır; uygulamalar güncellemeyi buradan alır
 
 on:
   push:
@@ -34,7 +34,7 @@ jobs:
             dist/*.zip
 
   mac:
-    name: macOS (.dmg)
+    name: macOS (.dmg + .zip)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +50,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Yanki-macOS
-          path: dist/*.dmg
+          path: |
+            dist/*.dmg
+            dist/*.zip
 
   release:
     name: İndirme sayfası (Release)
@@ -58,6 +60,12 @@ jobs:
     needs: [windows, mac]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sürüm notları
+        run: node scripts/release-notes.js "${{ github.ref_name }}" > notes.md
       - uses: actions/download-artifact@v4
         with:
           path: out
@@ -65,11 +73,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           name: YANKI ${{ github.ref_name }}
+          body_path: notes.md
           files: out/*
-          body: |
-            ## İndir
-            - **Windows (kurulum):** `.exe` dosyasını indirip çalıştır. "Windows bilgisayarınızı korudu" uyarısında *Ek bilgi › Yine de çalıştır*.
-            - **Windows (kurulumsuz):** `win-x64.zip` dosyasını bir klasöre çıkarıp içindeki `YANKI.exe` ile başlat. Antivirüs kurulum dosyasını engellerse bunu kullan.
-            - **macOS (M1/M2/M3/M4):** `mac-arm64.dmg` dosyasını indir.
-            - **macOS (Intel):** `mac-x64.dmg` dosyasını indir.
-              İlk açılışta: *Sistem Ayarları › Gizlilik ve Güvenlik › Yine de Aç*.

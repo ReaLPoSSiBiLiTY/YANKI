@@ -40,6 +40,16 @@ class FakeNet {
       return sw
     }
   }
+  duplicate (na, nb) {
+    const a = this.swarms.find(x => x.keyPair.publicKey.equals(na.id.publicKey))
+    const b = this.swarms.find(x => x.keyPair.publicKey.equals(nb.id.publicKey))
+    const ca = new FakeConn(b.keyPair.publicKey)
+    const cb = new FakeConn(a.keyPair.publicKey)
+    ca.other = cb; cb.other = ca
+    a.emit('connection', ca)
+    b.emit('connection', cb)
+  }
+
   connectAll () {
     for (const a of this.swarms) for (const b of this.swarms) {
       if (a === b) continue
@@ -184,6 +194,63 @@ async function main () {
   await until(() => A.music(sid, sesKanal).playing?.video.title === 'Şarkı', 'müzik eşitleme')
   assert.strictEqual(A.meta(sid).channels.find(c => c.id === sesKanal).music.title, 'Şarkı')
 
+
+  // ---------- v1.2: artımlı durum = baştan hesaplanan durum ----------
+  {
+    const { derive } = require('../src/p2p/state')
+    const st = A.servers.get(sid)
+    const inc = st.state
+    const full = derive(sid, st.ops.values(), A._hooks)
+    const pick = (x) => JSON.stringify({ ch: [...x.channels.keys()].sort(), m: (x.messages.get(genel) || []).map(m => [m.id, m.text, m.deleted, JSON.stringify(m.reactions)]), mem: [...x.members.keys()].sort(), adm: [...x.admins].sort() })
+    assert.strictEqual(pick(inc), pick(full), 'artımlı durum tam hesaplamayla aynı olmalı')
+  }
+
+  // ---------- v1.2: açık anket ----------
+  const openPoll = A.post(sid, 'message', { channel: genel, text: '', poll: { question: 'Hangi harita?', options: ['Dust', 'Mirage'], public: true } })
+  await until(() => B.messages(sid, genel).some(m => m.id === openPoll), 'anket B\'ye ulaştı')
+  B.post(sid, 'poll-vote', { target: openPoll, option: 1 })
+  await until(() => A.messages(sid, genel).find(m => m.id === openPoll)?.poll?.voters?.[1]?.includes(B.me), 'açık anket oy verenleri')
+  assert.strictEqual(A.messages(sid, genel).find(m => m.id === pollId).poll.voters, undefined, 'gizli ankette oy verenler görünmez')
+
+  // ---------- v1.2: gruplar ve şifreli özel kanal ----------
+  // A sahip, B yönetici (özel kanallara her zaman erişir), C sıradan üye
+  const grp = A.post(sid, 'group-create', { name: 'Ekip', color: '#ff4f8b' })
+  const ozel = A.post(sid, 'channel-create', { name: 'gizli', kind: 'text', category: null, groups: [grp] })
+  await until(() => B.meta(sid).channels.find(c => c.id === ozel)?.hasKey, 'yönetici B özel kanal anahtarını aldı', 8000)
+  await wait(300)
+  assert.ok(!C.meta(sid).channels.some(c => c.id === ozel), 'gruba dahil olmayan C özel kanalı görmez')
+  B.post(sid, 'message', { channel: ozel, text: 'Sadece ekip görebilir' })
+  await until(() => A.messages(sid, ozel).some(m => m.text === 'Sadece ekip görebilir'), 'şifreli mesaj A tarafından okundu')
+  await until(() => [...C.servers.get(sid).ops.values()].some(o => o.data && o.data.channel === ozel && o.data.enc), 'şifreli op C\'ye de eşitlendi')
+  assert.ok(![...C.servers.get(sid).ops.values()].some(o => JSON.stringify(o.data || {}).includes('Sadece ekip')), 'C düz metni göremez')
+  assert.throws(() => C.post(sid, 'message', { channel: ozel, text: 'izinsiz' }))
+  // C gruba eklenince anahtarı alır ve eski mesajları da okur
+  A.post(sid, 'group-member', { target: grp, user: C.me, on: true })
+  await until(() => C.messages(sid, ozel).some(m => m.text === 'Sadece ekip görebilir'), 'gruba eklenen C eski mesajı okur', 8000)
+  assert.ok(C.meta(sid).channels.find(c => c.id === ozel)?.private)
+  // C gruptan çıkarılınca anahtar yenilenir: C yeni mesajları okuyamaz
+  const epoch1 = A.servers.get(sid).state.curEpoch.get(ozel)
+  A.post(sid, 'group-member', { target: grp, user: C.me, on: false })
+  await until(() => A.servers.get(sid).state.curEpoch.get(ozel) !== epoch1, 'anahtar yenilendi', 8000)
+  A.post(sid, 'message', { channel: ozel, text: 'C artık okuyamaz' })
+  await until(() => B.messages(sid, ozel).some(m => m.text === 'C artık okuyamaz'), 'B yeni anahtarla okur', 8000)
+  await until(() => [...C.servers.get(sid).ops.values()].filter(o => o.data && o.data.channel === ozel && o.data.enc).length >= 2, 'yeni mesaj C\'ye ulaştı')
+  assert.ok(!C.messages(sid, ozel).some(m => m.text === 'C artık okuyamaz'), 'çıkarılan üye yeni mesajı okuyamaz')
+  assert.ok(!C.meta(sid).channels.some(c => c.id === ozel), 'çıkarılan üye kanalı artık görmez')
+
+  // ---------- v1.2: aynı kişiyle ikinci bağlantı; ilki kapanınca iletişim sürer ----------
+  {
+    const pA = A.peers.get(B.me)
+    const before = pA.conns.length
+    net.duplicate(A, B)
+    await until(() => A.peers.get(B.me).conns.length === before + 1, 'ikinci bağlantı')
+    A.peers.get(B.me).conns[0].destroy()
+    await wait(50)
+    assert.ok(A.peers.has(B.me), 'eş bağlantısı korunmalı')
+    A.post(sid, 'message', { channel: genel, text: 'yeni bağlantıdan' })
+    await until(() => B.messages(sid, genel).some(m => m.text === 'yeni bağlantıdan'), 'mesaj ikinci bağlantıdan geldi')
+  }
+
   // ---------- v1.1: arkadaşlık ve özel mesaj ----------
   // D hiçbir ortak sunucusu olmayan yeni bir kullanıcı; A'yı açık anahtarıyla ekler
   const D = await mk('deniz')
@@ -221,7 +288,7 @@ async function main () {
   const A2 = new P2PNode(path.join(root, 'ayse'), { swarmFactory: net.factory() })
   await A2.start()
   assert.strictEqual(A2.me, A.me)
-  assert.strictEqual(A2.messages(sid, genel).length, 4)
+  assert.strictEqual(A2.messages(sid, genel).length, 6)
   assert.strictEqual(A2.meta(sid).name, 'VAULT')
   assert.strictEqual(A2.dmMessages(D.me).length, 2, 'özel mesajlar diskte kalıcı')
   // Budanan profil kayıtları yeniden başlatmada dosyadan atılır

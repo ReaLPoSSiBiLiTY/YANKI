@@ -80,7 +80,7 @@ class ActivityDetector {
 
   start () {
     this.poll()
-    this.timer = setInterval(() => this.poll(), 20000)
+    this.timer = setInterval(() => this.poll(), 25000)
   }
 
   stop () { clearInterval(this.timer) }
@@ -128,26 +128,83 @@ class ActivityDetector {
     }
   }
 
+  // Hafif Windows algılaması: PowerShell yerine tasklist + Steam kayıt defteri.
+  // PowerShell yalnızca yeni bir oyun ilk kez görüldüğünde, simgesi için bir kez çalışır.
   async _pollWindows () {
-    const ps = '[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object ProcessName,Path,MainWindowTitle | ConvertTo-Json -Compress'
-    const out = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps])
-    if (!out.trim()) return null
-    let list = JSON.parse(out)
-    if (!Array.isArray(list)) list = [list]
-    let music = null
-    for (const p of list) {
-      const name = p.ProcessName || ''
-      const game = this._matchGame(name, p.Path, p.MainWindowTitle)
-      if (game) return { type: 'game', name: game, icon: await this._icon(p.Path), since: Date.now() }
-      if (name.toLowerCase() === 'spotify' && !music) {
-        const t = (p.MainWindowTitle || '').trim()
-        if (t && !/^spotify( free| premium)?$/i.test(t) && t.includes(' - ')) {
+    const out = await run('tasklist', ['/fo', 'csv', '/nh'], 6000)
+    const names = new Set()
+    for (const line of out.split(/\r?\n/)) {
+      const m = line.match(/^"([^"]+)"/)
+      if (m) names.add(m[1])
+    }
+    for (const exe of names) {
+      const game = this._matchGame(exe, null, '')
+      if (game) return { type: 'game', name: game, icon: await this._winIcon(exe), since: Date.now() }
+    }
+    const steam = await this._steamGame()
+    if (steam) return { type: 'game', name: steam.name, icon: steam.icon, since: Date.now() }
+    const spotify = [...names].find(n => n.toLowerCase() === 'spotify.exe')
+    if (spotify) {
+      const v = await run('tasklist', ['/v', '/fo', 'csv', '/nh', '/fi', 'imagename eq Spotify.exe'], 6000)
+      for (const line of v.split(/\r?\n/)) {
+        const cols = line.match(/"([^"]*)"/g)
+        if (!cols) continue
+        const t = cols[cols.length - 1].slice(1, -1).trim()
+        if (t && !/^spotify( free| premium)?$/i.test(t) && t !== 'N/A' && t.includes(' - ')) {
           const i = t.indexOf(' - ')
-          music = { type: 'music', service: 'Spotify', details: t.slice(0, i), name: t.slice(i + 3), icon: await this._icon(p.Path), since: Date.now() }
+          return { type: 'music', service: 'Spotify', details: t.slice(0, i), name: t.slice(i + 3), icon: await this._winIcon('Spotify.exe'), since: Date.now() }
         }
       }
     }
-    return music
+    return null
+  }
+
+  async _winIcon (exe) {
+    const k = 'exe:' + exe.toLowerCase()
+    if (this.iconCache.has(k)) return this.iconCache.get(k)
+    this.iconCache.set(k, null)
+    const ps = `(Get-Process -Name '${exe.replace(/\.exe$/i, '').replace(/'/g, '')}' -ErrorAction SilentlyContinue | Select-Object -First 1).Path`
+    const p = (await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], 8000)).trim()
+    const icon = p ? await this._icon(p) : null
+    this.iconCache.set(k, icon)
+    return icon
+  }
+
+  // Steam, çalışan oyunun kimliğini kayıt defterine yazar (RunningAppID)
+  async _steamGame () {
+    const q = await run('reg', ['query', 'HKCU\\Software\\Valve\\Steam', '/v', 'RunningAppID'], 4000)
+    const m = q.match(/RunningAppID\s+REG_DWORD\s+0x([0-9a-f]+)/i)
+    const id = m ? parseInt(m[1], 16) : 0
+    if (!id) return null
+    if (this.iconCache.has('steam:' + id)) return this.iconCache.get('steam:' + id)
+    const sp = (await run('reg', ['query', 'HKCU\\Software\\Valve\\Steam', '/v', 'SteamPath'], 4000)).match(/SteamPath\s+REG_SZ\s+(.+)/i)
+    let result = { name: 'Steam oyunu', icon: null }
+    if (sp) {
+      const fs = require('fs')
+      const root = sp[1].trim().replace(/\//g, '\\')
+      const libs = [root]
+      try {
+        const vdf = fs.readFileSync(path.join(root, 'steamapps', 'libraryfolders.vdf'), 'utf8')
+        for (const mm of vdf.matchAll(/"path"\s+"([^"]+)"/g)) libs.push(mm[1].replace(/\\\\/g, '\\'))
+      } catch {}
+      for (const lib of libs) {
+        try {
+          const acf = fs.readFileSync(path.join(lib, 'steamapps', `appmanifest_${id}.acf`), 'utf8')
+          const name = acf.match(/"name"\s+"([^"]+)"/)?.[1]
+          const dir = acf.match(/"installdir"\s+"([^"]+)"/)?.[1]
+          if (name) result.name = name
+          if (dir) {
+            const gdir = path.join(lib, 'steamapps', 'common', dir)
+            const exes = fs.readdirSync(gdir).filter(f => /\.exe$/i.test(f) && !/unins|crash|launcher|setup|redist/i.test(f))
+              .map(f => ({ f, size: fs.statSync(path.join(gdir, f)).size })).sort((a, b) => b.size - a.size)
+            if (exes[0]) result.icon = await this._icon(path.join(gdir, exes[0].f))
+          }
+          break
+        } catch {}
+      }
+    }
+    if (this.custom.length || result) this.iconCache.set('steam:' + id, result)
+    return result
   }
 
   async _pollMac () {

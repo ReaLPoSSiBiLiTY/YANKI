@@ -22,8 +22,10 @@ const SCREEN_QUALITY = {
 const rid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
 
 class Voice {
-  constructor ({ api, me, settings, onUpdate, onSpeaking, toast }) {
+  constructor ({ api, me, settings, onUpdate, onSpeaking, toast, allowed }) {
     this.api = api
+    // Özel (gruplu) ses kanalları: bu kişi bu kanala girebilir mi?
+    this.allowed = allowed || (() => true)
     this.me = me
     this.settings = settings
     this.onUpdate = onUpdate
@@ -39,6 +41,9 @@ class Voice {
     this.muted = false
     this.deaf = false
     this.peers = new Map()
+    this.watchers = new Set() // yayınımı izleyenler
+    this.watching = new Set() // yayınını izlediklerim
+    this._watchAsk = new Map() // izleme isteğini son gönderme zamanı
     this.states = new Map() // kullanıcı -> { server, channel, sess, muted, deaf, mic, cam, screen, at }
     this.audioEls = new Map()
     this.analysers = new Map()
@@ -111,6 +116,8 @@ class Voice {
     for (const k of [...this.peers.keys()]) this._closePeer(k)
     for (const s of [this.mic, this.cam, this.screen]) s?.getTracks().forEach(t => t.stop())
     this.mic = this.cam = this.screen = null
+    this.watchers.clear()
+    this.watching.clear()
     this._unwatch(this.me)
     this.server = null
     this.session = null
@@ -129,7 +136,8 @@ class Voice {
       mic: this.mic?.id || null,
       cam: this.cam?.id || null,
       screen: this.screen?.id || null,
-      screenLabel: this.screen ? this.screenQuality.label : null
+      screenLabel: this.screen ? this.screenQuality.label : null,
+      watchers: this.screen ? [...this.watchers] : []
     }
   }
 
@@ -141,6 +149,13 @@ class Voice {
 
   _tick () {
     if (this.channel && Date.now() - this._lastBroadcast > 4000) this._broadcast()
+    // İzleme isteği yanıtsız kaldıysa (görüntü gelmediyse) yeniden iste
+    for (const key of this.watching) {
+      const st = this.states.get(key)
+      const p = this.peers.get(key)
+      if (!st || !st.screen || !this._inRoom(st)) { this.watching.delete(key); continue }
+      if (p && !p.streams.has(st.screen) && Date.now() - (this._watchAsk.get(key) || 0) > 4000) this._askWatch(key, true)
+    }
     let changed = false
     for (const [k, st] of this.states) {
       if (Date.now() - st.at > 13000) {
@@ -159,7 +174,7 @@ class Voice {
     if (!data.channel) this.states.delete(from)
     else this.states.set(from, { ...data, server, at: Date.now() })
     const st = this.states.get(from)
-    if (this._inRoom(st)) {
+    if (this._inRoom(st) && this.allowed(server, st.channel, from)) {
       const p = this.peers.get(from)
       // Karşı taraf çıkıp yeniden girdiyse eski bağlantıyı tamamen at
       if (p && st.sess && p.remoteSess && p.remoteSess !== st.sess) this._closePeer(from)
@@ -170,8 +185,18 @@ class Voice {
       this._closePeer(from)
       this._sound('leave')
     }
-    const significant = !prev || !st || prev.channel !== st.channel || prev.muted !== st.muted || prev.deaf !== st.deaf || prev.cam !== st.cam || prev.screen !== st.screen
+    if (!st || !st.screen) this.watching.delete(from)
+    const significant = !prev || !st || prev.channel !== st.channel || prev.muted !== st.muted || prev.deaf !== st.deaf || prev.cam !== st.cam || prev.screen !== st.screen || (prev.watchers || []).length !== (st.watchers || []).length
     if (significant) this.onUpdate()
+  }
+
+  // Grup/izin değişikliklerinden sonra çağrılır: artık izinli olmayanlarla bağlantıyı kes
+  recheckAccess () {
+    if (!this.channel) return
+    if (!this.allowed(this.server, this.channel, this.me)) { this.toast('Bu ses kanalına erişimin kaldırıldı.'); this.leave(); return }
+    let changed = false
+    for (const k of [...this.peers.keys()]) if (!this.allowed(this.server, this.channel, k)) { this._closePeer(k); changed = true }
+    if (changed) this.onUpdate()
   }
 
   // ---------- Eş bağlantıları ----------
@@ -196,7 +221,7 @@ class Voice {
   }
 
   _buildPc (p) {
-    const pc = new RTCPeerConnection({ iceServers: this.iceServers(), bundlePolicy: 'max-bundle' })
+    const pc = new RTCPeerConnection({ iceServers: this.iceServers(), bundlePolicy: 'max-bundle', iceCandidatePoolSize: 2 })
     p.pc = pc
     p.makingOffer = false
     p.ignoreOffer = false
@@ -238,10 +263,12 @@ class Voice {
 
     let hasAudio = false
     for (const [stream, kind] of this._localStreams()) {
+      // Ekran yalnızca "Yayını İzle" diyenlere gider
+      if (kind === 'screen' && !this.watchers.has(key)) continue
       for (const t of stream.getTracks()) {
         const sender = pc.addTrack(t, stream)
         if (t.kind === 'audio' && kind === 'mic') hasAudio = true
-        if (kind === 'screen' && t.kind === 'video') this._tuneScreenSender(sender)
+        if (kind === 'screen' && t.kind === 'video') this._tuneScreenSender(sender, pc)
       }
     }
     // Mikrofonu olmayan dinleyici de müzakereyi başlatabilsin
@@ -256,17 +283,27 @@ class Voice {
     if (st === 'connected') { p.badSince = 0; return }
     if (!p.badSince) p.badSince = now
     const age = now - p.badSince
-    if (st === 'disconnected' && age > 5000 && p.attempts === 0) {
+    if (st === 'disconnected' && age > 4000 && p.attempts === 0) {
       p.attempts = 1
       try { p.pc.restartIce() } catch {}
-    } else if (age > 10000 && p.attempts === 0) {
+    } else if (age > 6000 && p.attempts === 0) {
       p.attempts = 1
       try { p.pc.restartIce() } catch {}
-    } else if (age > 22000 && p.attempts >= 1) {
+    } else if (age > (p.attempts === 1 ? 15000 : 20000) && p.attempts >= 1) {
       // İki tarafta da sıfırdan kur
       p.attempts++
       this._rebuild(p, p.gen + 1, true)
+      if (this.watching.has(p.key)) setTimeout(() => this._askWatch(p.key, true), 500)
     }
+  }
+
+  // Bir kişiyle bağlantıyı elle sıfırla (arayüzdeki "Yeniden bağlan")
+  reconnect (key) {
+    const p = this.peers.get(key)
+    if (!p) return
+    p.attempts = 1
+    this._rebuild(p, p.gen + 1, true)
+    if (this.watching.has(key)) setTimeout(() => this._askWatch(key, true), 500)
   }
 
   _rebuild (p, gen, notify) {
@@ -289,6 +326,8 @@ class Voice {
     for (const id of p.streams.keys()) this._stopAudio(key, id)
     this._unwatch(key)
     this.peers.delete(key)
+    this.watching.delete(key)
+    if (this.watchers.delete(key)) this._broadcast()
     this.api.wantPeer(key, 'voice', false)
   }
 
@@ -303,6 +342,7 @@ class Voice {
   onSignal (from, d) {
     if (!this.channel || !d || d.s !== this.server || d.c !== this.channel) return
     if (d.ts && d.ts !== this.session) return // eski oturumumuza ait
+    if (!this.allowed(this.server, this.channel, from)) return // özel kanala izinsiz bağlantı
     let p = this.peers.get(from)
     if (p && d.fs && p.remoteSess && d.fs !== p.remoteSess) { this._closePeer(from); p = null }
     const g = Number.isInteger(d.g) ? d.g : 0
@@ -310,6 +350,7 @@ class Voice {
     else if (g > p.gen) this._rebuild(p, g, false)
     else if (g < p.gen) return // bayat kuşak
     if (!p.remoteSess && d.fs) p.remoteSess = d.fs
+    if (typeof d.watch === 'boolean') { this._setWatcher(from, d.watch); return }
     if (d.reset) return
     const pc = p.pc
     p.queue = p.queue.then(() => this._handleSignal(p, pc, d)).catch(e => console.warn('signal', e))
@@ -350,6 +391,56 @@ class Voice {
         if (sender.track && tracks.has(sender.track)) { try { p.pc.removeTrack(sender) } catch {} }
       }
     }
+  }
+
+  // ---------- Yayını izle ----------
+
+  _askWatch (key, on) {
+    const p = this.peers.get(key)
+    if (!p) return
+    this._watchAsk.set(key, Date.now())
+    this._sig(p, { watch: on })
+  }
+
+  watch (key) {
+    if (!this.channel || this.watching.has(key)) return
+    this.watching.add(key)
+    this._askWatch(key, true)
+    this.onUpdate()
+  }
+
+  unwatch (key) {
+    if (!this.watching.delete(key)) return
+    this._askWatch(key, false)
+    const st = this.states.get(key)
+    const p = this.peers.get(key)
+    if (st?.screen && p) { this._stopAudio(key, st.screen); p.streams.delete(st.screen) }
+    this.onUpdate()
+  }
+
+  // Yayıncı tarafı: izleyici ekle/çıkar, ekran izini yalnızca ona gönder
+  _setWatcher (key, on) {
+    const p = this.peers.get(key)
+    if (on) {
+      if (!this.screen || !p) return
+      const tracks = new Set(this.screen.getTracks())
+      const already = p.pc.getSenders().some(s => s.track && tracks.has(s.track))
+      this.watchers.add(key)
+      if (!already) {
+        for (const t of this.screen.getTracks()) {
+          const sender = p.pc.addTrack(t, this.screen)
+          if (t.kind === 'video') this._tuneScreenSender(sender, p.pc)
+        }
+      }
+    } else {
+      this.watchers.delete(key)
+      if (p && this.screen) {
+        const tracks = new Set(this.screen.getTracks())
+        for (const s of p.pc.getSenders()) if (s.track && tracks.has(s.track)) { try { p.pc.removeTrack(s) } catch {} }
+      }
+    }
+    this._broadcast()
+    this.onUpdate()
   }
 
   // ---------- Mikrofon / kulaklık ----------
@@ -537,7 +628,7 @@ class Voice {
     vt.onended = () => this.stopScreen()
     this.screen = stream
     this.screenQuality = q
-    this._addStreamToPeers(stream, 'screen')
+    this.watchers.clear()
     this._broadcast()
     this.onUpdate()
   }
@@ -547,10 +638,21 @@ class Voice {
     this._removeStreamFromPeers(this.screen)
     this.screen.getTracks().forEach(t => { t.onended = null; t.stop() })
     this.screen = null
+    this.watchers.clear()
     if (!silent) { this._broadcast(); this.onUpdate() }
   }
 
-  _tuneScreenSender (sender) {
+  _tuneScreenSender (sender, pc) {
+    // Donanım hızlandırmalı H.264'ü öne al: yazılım VP8 kodlaması yayıncının işlemcisini
+    // (ve oyununu) yoruyordu.
+    try {
+      const tr = pc && pc.getTransceivers().find(t => t.sender === sender)
+      const caps = RTCRtpSender.getCapabilities?.('video')?.codecs
+      if (tr && caps && tr.setCodecPreferences) {
+        const h264 = caps.filter(c => /h264/i.test(c.mimeType))
+        if (h264.length) tr.setCodecPreferences([...h264, ...caps.filter(c => !/h264/i.test(c.mimeType))])
+      }
+    } catch {}
     const q = this.screenQuality
     const apply = async () => {
       try {
@@ -573,7 +675,7 @@ class Voice {
   _retuneScreen (p) {
     if (!this.screen) return
     const vt = this.screen.getVideoTracks()[0]
-    for (const s of p.pc.getSenders()) if (s.track === vt) this._tuneScreenSender(s)
+    for (const s of p.pc.getSenders()) if (s.track === vt) this._tuneScreenSender(s, null)
   }
 
   // ---------- Arayüz için veri ----------
@@ -589,7 +691,7 @@ class Voice {
       list.push({ key: this.me, ...this._state(), self: true })
     }
     for (const [k, st] of this.states) {
-      if (st.server === server && st.channel === channel) list.push({ key: k, ...st, self: false, conn: this.peerState(k) })
+      if (st.server === server && st.channel === channel && this.allowed(server, channel, k)) list.push({ key: k, ...st, self: false, conn: this.peerState(k) })
     }
     return list
   }
@@ -599,13 +701,16 @@ class Voice {
     const out = []
     for (const p of this.participants(this.server, this.channel)) {
       if (p.self) {
-        if (this.screen) out.push({ id: 'screen:' + p.key, key: p.key, kind: 'screen', stream: this.screen, self: true, label: this.screenQuality.label })
+        if (this.screen) out.push({ id: 'screen:' + p.key, key: p.key, kind: 'screen', stream: this.screen, self: true, label: this.screenQuality.label, viewers: [...this.watchers], watching: true })
         if (this.cam) out.push({ id: 'cam:' + p.key, key: p.key, kind: 'cam', stream: this.cam, self: true })
         if (!this.cam) out.push({ id: 'av:' + p.key, key: p.key, kind: 'avatar', self: true })
         continue
       }
       const peer = this.peers.get(p.key)
-      if (p.screen) out.push({ id: 'screen:' + p.key, key: p.key, kind: 'screen', stream: peer?.streams.get(p.screen) || null, label: p.screenLabel })
+      if (p.screen) {
+        const watching = this.watching.has(p.key)
+        out.push({ id: 'screen:' + p.key, key: p.key, kind: 'screen', stream: watching ? (peer?.streams.get(p.screen) || null) : null, label: p.screenLabel, viewers: p.watchers || [], watching })
+      }
       if (p.cam) out.push({ id: 'cam:' + p.key, key: p.key, kind: 'cam', stream: peer?.streams.get(p.cam) || null })
       else out.push({ id: 'av:' + p.key, key: p.key, kind: 'avatar', conn: p.conn })
     }

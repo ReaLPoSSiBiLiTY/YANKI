@@ -18,8 +18,8 @@ const BOT_DEFS = {
   },
   poll: {
     name: 'Anket', glyph: 'poll', colors: ['#3ddc84', '#18c8ff'], kind: 'text',
-    desc: 'Hızlı anket oluşturur; herkes tek oy verir, istediğinde değiştirir.',
-    commands: [['/anket Soru | Seçenek 1 | Seçenek 2', 'En fazla 10 seçenek']]
+    desc: 'Hızlı anket oluşturur; herkes tek oy verir, istediğinde değiştirir. Gizli ankette yalnızca sayılar, açık ankette kimin neye oy verdiği görünür.',
+    commands: [['/anket Soru | Seçenek 1 | Seçenek 2', 'Gizli anket (en fazla 10 seçenek)'], ['/açıkanket Soru | Seçenek 1 | Seçenek 2', 'Açık anket: oy verenler görünür']]
   },
   welcome: {
     name: 'Karşılama', glyph: 'wave', colors: ['#ff4f8b', '#9b6bff'], kind: 'text',
@@ -83,19 +83,26 @@ function renderBotReply (m) {
 function renderPoll (m) {
   const p = m.poll
   const max = Math.max(1, ...p.counts)
+  const voters = (list) => {
+    if (!list || !list.length) return ''
+    const shown = list.slice(0, 8)
+    return `<div class="poll-voters" title="${esc(list.map(k => nameOf(k)).join(', '))}">${shown.map(k => `<span data-act="user" data-key="${k}">${avatar(k, 20)}</span>`).join('')}${list.length > shown.length ? `<span class="pv-more">+${list.length - shown.length}</span>` : ''}<span class="pv-names">${esc(list.slice(0, 3).map(k => nameOf(k)).join(', '))}${list.length > 3 ? ' ve diğerleri' : ''}</span></div>`
+  }
   return `
-    <div class="poll">
-      <div class="poll-head">${botAvatar('poll', 22)}<span>Anket</span><span class="tag-bot">BOT</span><span class="muted small">${p.total} oy</span></div>
+    <div class="poll ${p.public ? 'public' : ''}">
+      <div class="poll-head">${botAvatar('poll', 22)}<span>Anket</span><span class="tag-bot">BOT</span>
+        <span class="poll-kind" title="${p.public ? 'Kimin hangi seçeneğe oy verdiği herkese görünür' : 'Yalnızca oy sayıları görünür'}">${icon(p.public ? 'eye' : 'eyeOff', 13)} ${p.public ? 'Açık' : 'Gizli'}</span>
+        <span class="muted small">${p.total} oy</span></div>
       <div class="poll-q">${esc(p.question)}</div>
       ${p.options.map((o, i) => {
         const pct = p.total ? Math.round(p.counts[i] / p.total * 100) : 0
-        return `<button class="poll-opt ${p.mine === i ? 'mine' : ''} ${p.counts[i] === max && p.total ? 'lead' : ''}" data-act="vote" data-id="${m.id}" data-opt="${i}">
+        return `<div class="poll-row"><button class="poll-opt ${p.mine === i ? 'mine' : ''} ${p.counts[i] === max && p.total ? 'lead' : ''}" data-act="vote" data-id="${m.id}" data-opt="${i}">
           <span class="poll-bar" style="width:${pct}%"></span>
           <span class="poll-label">${p.mine === i ? icon('check', 14) : ''}${esc(o)}</span>
           <span class="poll-count">${p.counts[i]} · %${pct}</span>
-        </button>`
+        </button>${p.public ? voters(p.voters?.[i]) : ''}</div>`
       }).join('')}
-      <div class="muted small">${p.mine >= 0 ? 'Oyunu geri almak için seçtiğin seçeneğe tekrar tıkla.' : 'Oy vermek için bir seçeneğe tıkla.'}</div>
+      <div class="muted small">${p.mine >= 0 ? 'Oyunu geri almak için seçtiğin seçeneğe tekrar tıkla.' : 'Oy vermek için bir seçeneğe tıkla.'}${p.public ? ' Bu açık bir anket: oyun herkese görünür.' : ''}</div>
     </div>`
 }
 
@@ -176,8 +183,9 @@ class MusicPlayer {
     this.entryId = null
     this.iframe = null
     this._refreshTimer = null
-    setInterval(() => this.tick(), 1000)
-    setInterval(() => this.position(), 300)
+    setInterval(() => { if (this.state?.playing) this.tick() }, 1000)
+    // Oynatıcı yalnızca çalarken konumlandırılır (boşta işlemci harcamasın)
+    setInterval(() => { if (this.iframe) this.position() }, 300)
     window.addEventListener('resize', () => this.position())
   }
 
@@ -204,7 +212,7 @@ class MusicPlayer {
     this.entryId = want
     this.host.innerHTML = ''
     this.iframe = null
-    if (!want) { renderStage(); return }
+    if (!want) { this.position(); renderStage(); return }
     const start = Math.max(0, Math.floor((Date.now() - p.startedAt) / 1000))
     const f = document.createElement('iframe')
     f.src = `https://www.youtube-nocookie.com/embed/${p.video.id}?autoplay=1&start=${start}&enablejsapi=1&controls=0&rel=0&playsinline=1&modestbranding=1&iv_load_policy=3`

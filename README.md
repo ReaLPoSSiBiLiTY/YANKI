@@ -1,35 +1,72 @@
-# YANKI
+<p align="center"><img src="docs/banner.png" alt="YANKI" width="860"></p>
 
-Merkezi sunucusuz, eşler arası (P2P) topluluk ve haberleşme uygulaması. Windows ve macOS için.
+<p align="center">
+  <a href="https://github.com/ReaLPoSSiBiLiTY/YANKI/releases/latest"><img src="https://img.shields.io/github/v/release/ReaLPoSSiBiLiTY/YANKI?label=s%C3%BCr%C3%BCm&color=ff4f8b&style=for-the-badge" alt="Sürüm"></a>
+  <img src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS-9b6bff?style=for-the-badge" alt="Windows ve macOS">
+  <img src="https://img.shields.io/badge/sunucu-yok-18c8ff?style=for-the-badge" alt="Sunucusuz">
+</p>
 
-Sunucular, kanallar, sesli ve görüntülü sohbet, 1080p ekran paylaşımı, arkadaşlar, özel mesajlar ve botlar sunar. Hiçbir veri bir şirketin sunucusunda durmaz: topluluk, üyelerinin bilgisayarlarında yaşar ve üyeler birbirine doğrudan, şifreli bağlantılarla bağlanır.
+<p align="center"><b>Merkezi sunucusuz, eşler arası (P2P) topluluk ve haberleşme uygulaması.</b><br>
+Topluluğun yalnızca üyelerinin bilgisayarlarında yaşar; herkes birbirine doğrudan, şifreli bağlantılarla bağlanır.</p>
 
-## v1.1'de yenilikler
+<p align="center"><a href="https://github.com/ReaLPoSSiBiLiTY/YANKI/releases/latest"><b>⬇ Son sürümü indir</b></a></p>
 
-- **Yeni görsel kimlik:** Yeni logo ve uygulama simgesi; yüzen cam paneller, konuşurken avatardan yayılan yankı halkaları ve sahnede yüzen kontrol çubuğu.
-- **Temalar:** 10 hazır tema (6'sı oyun temalı, YANKI için kodla üretilmiş özgün resimler).
-  - Kendi resmini yükleyebilirsin; resminden otomatik renk paleti önerilir.
-  - Karartma, bulanıklık ve panel saydamlığı ayarlanabilir.
-- **Hareketli GIF:** Avatar, banner ve sunucu simgesi GIF olabilir ve uygulamada hareket eder.
-- **Arkadaşlar ve özel mesajlar:**
-  - Arkadaşlık isteği gönder, kabul et ya da reddet; engelleme de var.
-  - Özel mesajlar yalnızca iki kişi arasında gider; üçüncü eşlere hiç gönderilmez.
-  - Ortak sunucu gerekmez; arkadaş koduyla eklenir.
-- **Botlar:** Yöneticiler botları açıp istedikleri kanallara ekler.
-  - **Zar** (`/zar 2d6+1`): Sonuç herkes için aynıdır.
-  - **Anket** (`/anket Soru | A | B`)
-  - **Karşılama:** Yeni üyeleri seçilen kanalda karşılar.
-  - **Müzik Çalar** (`/çal <YouTube>`, `/geç`, `/dur`): Ses kanalındaki herkes aynı şarkıyı aynı anda dinler; kuyruk desteği var.
-- **Etkinlik:** Oynadığın oyun ("Valheim oynuyor") ya da Spotify / Apple Music'te çalan şarkı ("Sanatçı - Şarkı dinliyor"), uygulamanın kendi simgesiyle avatarında ve adının altında görünür.
-  - Steam, Epic, GOG ve Riot oyunları klasöründen otomatik tanınır.
-  - Tanınmayan oyunları kendin ekleyebilirsin.
-- **Yankısız ekran paylaşımı:** Sistem sesi paylaşılırken YANKI'nın kendi çaldığı sesler (diğer konuşmacılar, müzik botu) yayından çıkarılır.
-- **Daha sağlam ses bağlantısı:**
-  - Çıkıp hemen geri girenlerde eski bağlantı artık takılmıyor.
-  - Bağlanamayan eşler önce otomatik onarılıyor, gerekirse bağlantı sıfırdan kuruluyor.
-- **Susturma göstergesi:** Hem mikrofon hem kulaklık kapalıysa iki simge birden görünür.
-- **Ad:** Uygulama Görev Yöneticisi'nde ve macOS'ta "YANKI" olarak görünür.
-  - v1.0 verileri (kimlik, sunucular) ilk açılışta otomatik taşınır.
+<p align="center"><img src="docs/chat.jpg" alt="YANKI sohbet ekranı" width="900"></p>
+
+## Neler var?
+
+| | |
+|---|---|
+| 💬 **Sunucular ve kanallar** | Metin ve ses kanalları, kategoriler, yanıtlar, tepkiler, sabitleme, resim/GIF, YouTube önizlemesi |
+| 🎙️ **Ses, görüntü, yayın** | Sesli/görüntülü sohbet ve 1080p60 ekran paylaşımı; yayın yalnızca "Yayını İzle" diyenlere gider |
+| 🔒 **Gruplar ve özel kanallar** | Kanalları belirli gruplara aç; özel metin kanalları uçtan uca şifrelenir |
+| 📣 **@bahsetme** | `@` yaz, kişiyi seç; `@herkes` ile herkese bildirim |
+| 👥 **Arkadaşlar ve özel mesajlar** | Arkadaşlık istekleri, engelleme, açık ekranı bozmayan mini mesaj penceresi |
+| 🤖 **Botlar** | Zar, açık/gizli Anket, Karşılama ve herkesin aynı anda dinlediği Müzik Çalar |
+| 🎮 **Etkinlik** | Oynadığın oyun ve Spotify / Apple Music'te çalan şarkı profilinde görünür |
+| 🎨 **Temalar** | Koyu ve açık mod; Futbol, FPS, RPG, Yarış ve daha fazla özgün tema, kendi resminden palet |
+| ⬆️ **Otomatik güncelleme** | Yeni sürüm çıkınca "Güncelle" düğmesi; tek tıkla kurulur |
+
+<table>
+  <tr>
+    <td><img src="docs/stream.jpg" alt="Yayın izleme"></td>
+    <td><img src="docs/light.jpg" alt="Açık mod"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Yayını İzle · izleyici sayısı · Yayını Kapat</sub></td>
+    <td align="center"><sub>Açık mod</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/groups.jpg" alt="Gruplar"></td>
+    <td><img src="docs/rpg.jpg" alt="RPG teması"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Gruplar ve kanal erişimi</sub></td>
+    <td align="center"><sub>Kale Alacakaranlığı (RPG) teması</sub></td>
+  </tr>
+</table>
+
+## v1.2'de yenilikler
+
+- **Otomatik güncelleme:** Uygulama GitHub sürüm sayfasını takip eder. Yeni sürüm çıkınca sol altta yeşil **Güncelle** düğmesi belirir; tıklayınca indirilir, kurulur ve YANKI yeniden açılır.
+  - Windows: kurulum dosyasıyla (.exe) kurulan sürümde tam otomatik. Kurulumsuz (.zip) sürümde indirme sayfası açılır.
+  - macOS: YANKI **Uygulamalar** klasöründeyse tam otomatik.
+- **Yenilikler ekranı:** Güncellemeden sonraki ilk açılışta bu sürümde neler değiştiği gösterilir (Ayarlar › Hakkında'dan da açılır).
+- **@bahsetme:** `@` yazınca kanaldaki kişiler (önce çevrim içi olanlar) ve `@herkes` listelenir. Bahsedilen kişiye bildirim gider; kanal ve sunucu yanında sayaç görünür. Ad sonradan değişse de bahsetme doğru kişiyi gösterir.
+- **Gruplar ve özel kanallar:** Yöneticiler grup oluşturur (Sunucu menüsü › Gruplar ve erişim) ve metin/ses kanallarını yalnızca seçili gruplara açar.
+  - Özel kanallar kilit simgesiyle ayrılır; gruba dahil olmayanlar kanalı göremez, sesine bağlanamaz.
+  - Özel metin kanallarının mesajları kanal anahtarıyla uçtan uca şifrelenir. Gruptan çıkarılan biri için anahtar yenilenir; sonraki mesajları okuyamaz.
+- **Yayını İzle:** Ekran yayınları artık kendiliğinden açılmaz. "Yayını İzle" ile başlar, üzerinde izleyici sayısı görünür, "Yayını Kapat" ile çıkılır. Yayıncının bilgisayarı yalnızca izleyenler için kodlama yapar ve mümkünse donanım hızlandırmalı H.264 kullanır; oyundaki takılmalar azalır.
+- **Tam ekran düzeltmesi:** Tam ekran izlenen yayın artık kendiliğinden küçük görünüme dönmüyor.
+- **Daha sağlam bağlantı:** "Bağlanıyor…"da takılan kişiler daha hızlı onarılıyor; gerekirse kişinin kutusundaki **Yeniden bağlan** düğmesiyle tek kişiyle bağlantı sıfırlanabiliyor. Aynı kişiyle ikinci bir ağ bağlantısı açıldığında eskisinin kopması düzeltildi.
+- **Açık ve gizli anket:** Anket simgesinden (ya da `/anket` / `/açıkanket`) oluşturulur; anketi açan kişi kimin neye oy verdiğinin görünüp görünmeyeceğini seçer.
+- **Mini özel mesaj penceresi:** Bir sunucudayken açılan özel mesajlar sağ altta küçük bir pencerede açılır; bulunduğun ekran değişmez. Tam görünüme tek tıkla geçilir.
+- **Koyu / Açık / Sistem modu** ve yeni temalar: Gece Maçı (Futbol), Taktik HUD (FPS), Kale Alacakaranlığı (RPG), Gece Pisti (Yarış). Tüm temaların açık mod sürümü var. Görseller YANKI için kodla üretilmiştir; hiçbir oyun, takım ya da markaya ait içerik kullanılmaz.
+- **Daha az kaynak tüketimi:**
+  - Sohbet geçmişi her yeni mesajda baştan hesaplanmıyor, artımlı işleniyor.
+  - Windows'ta oyun algılama tek ve hafif bir sorguyla yapılıyor.
+  - Pencere arka plandayken arayüz çizilmiyor.
+  - İsteğe bağlı **Performans modu** cam bulanıklığını ve animasyonları kapatıyor.
 
 ## Kurulum ve çalıştırma
 
@@ -44,11 +81,19 @@ npm run start:2   # aynı bilgisayarda ikinci bir kullanıcıyla denemek için
 ## Kurulum dosyası üretme
 
 ```bash
-npm run dist:win   # Windows'ta → dist/YANKI-1.1.0-win-x64.exe ve kurulumsuz .zip
-npm run dist:mac   # macOS'ta  → dist/YANKI-1.1.0-mac-arm64.dmg ve mac-x64.dmg
+npm run dist:win   # Windows'ta → dist/YANKI-1.2.0-win-x64.exe ve kurulumsuz .zip
+npm run dist:mac   # macOS'ta  → dist/YANKI-1.2.0-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
 ```
 
-İki platformu birden derlemek için projeyi GitHub'a yükle ve `v1.1.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derleyip Releases sayfasında yayınlar.
+İki platformu birden derlemek için `v1.2.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derler, sürüm notlarını `renderer/changelog.js`'ten üretir ve Releases sayfasında yayınlar. Uygulamalar güncellemeyi bu sayfadan alır.
+
+### Yeni sürüm çıkarma
+
+1. `package.json` içindeki `version` değerini yükselt (ör. `1.3.0`).
+2. `renderer/changelog.js` dosyasının en üstüne yeni sürümün maddelerini ekle. Hem uygulamadaki Yenilikler ekranı hem GitHub sürüm sayfası buradan üretilir.
+3. Değişiklikleri gönder ve `v1.3.0` etiketini oluşturup gönder.
+
+> Otomatik güncellemenin çalışması için depo **herkese açık** olmalıdır (uygulamalar sürüm bilgisini GitHub'dan girişsiz okur).
 
 ## Nasıl çalışır
 
@@ -59,15 +104,19 @@ npm run dist:mac   # macOS'ta  → dist/YANKI-1.1.0-mac-arm64.dmg ve mac-x64.dmg
 - **Botlar:** Sürekli çalışan bir bot sunucusu yoktur; botların davranışı herkesin uygulamasında aynı kurallarla hesaplanır.
   - Zar sonucu mesajın kimliğinden türetilir.
   - Müzik kuyruğunun zamanlaması kayıtlardan ve şarkı sürelerinden hesaplanır; her dinleyici YouTube'dan aynı saniyeden çalar.
+- **Özel kanallar:** Her üye sunucuda bir X25519 açık anahtarı yayımlar. Özel metin kanalının anahtarı, kanala erişebilen her üye için ayrı ayrı (ECDH + HKDF + AES-256-GCM) mühürlenerek dağıtılır; mesajlar bu anahtarla şifrelenir. Erişimi kalkan biri olunca yönetici yeni bir anahtar kuşağı oluşturur.
 - **Ses ve görüntü:** WebRTC mesh topolojisi kullanılır.
   - Her katılış yeni bir oturum kimliği alır.
   - Erken gelen ICE adayları tamponlanır.
-  - Takılan bağlantılar 10 saniyede onarılmaya çalışılır, olmazsa 22 saniyede sıfırdan kurulur.
+  - Takılan bağlantılarda 6 saniyede ICE yeniden başlatılır, olmazsa 15 saniyede bağlantı sıfırdan kurulur.
+  - Ekran yayını yalnızca izlemek isteyenlere eklenir.
 
 ### Bilinen sınırlar
 
 - Bir sunucunun ya da özel sohbetin yeni verisi, karşı tarafın uygulaması açıkken eşitlenir.
 - Mesh topolojide her izleyiciye ayrı akış gider. 1080p60 izleyici başına yaklaşık 9 Mbps yükleme ister.
+- Gizli anketlerde oylar arayüzde gösterilmez, ancak oylar imzalı kayıtlar olduğu için uygulamayı değiştiren biri kimin oy verdiğini görebilir.
+- Özel kanallarda mesaj metni ve ekler şifrelenir; tepkiler, anket oyları ve mesaj zamanları gibi üst bilgiler şifrelenmez (sunucu üyeleri arasında kalır).
 - Yankısız sistem sesi Windows'ta, Chromium'un `restrictOwnAudio` özelliğine dayanır. Sistem bunu desteklemezse ekran sessiz paylaşılır; istersen Ayarlar › Ekran Paylaşımı'ndan yine de sesli paylaşabilirsin. macOS'ta sistem sesi paylaşımı yoktur.
 - Müzik Çalar YouTube gömme oynatıcısını kullanır. Sahibinin gömmeye kapattığı videolar çalmaz.
 - Zar sonucu deterministiktir. Kendi uygulamasını değiştiren biri, istediği sonucu verecek bir mesaj kimliği arayabilir; bu sistem arkadaş ortamı için tasarlandı.
@@ -81,7 +130,11 @@ preload.js           Arayüze güvenli API köprüsü
 src/p2p/node.js      P2P düğümü: keşif, eşitleme, arkadaşlık/özel mesaj, sinyal aktarma, etkinlik
 src/p2p/state.js     Kayıtlardan durum: sunucu, botlar (zar/anket/müzik), özel alan
 src/activity.js      Oyun ve Spotify/Apple Music algılama
+src/updater.js       GitHub Releases üzerinden otomatik güncelleme
+scripts/release-notes.js  Sürüm sayfası metni (changelog.js'ten)
 renderer/
+  changelog.js       Sürüm notları (Yenilikler ekranı ve GitHub sürüm sayfası)
+  extras.js          @bahsetme, anket oluşturucu, mini özel mesaj, gruplar, güncelleme ekranları
   core.js            Ortak durum, avatarlar, modallar, resim/GIF yükleme
   app.js             Kanallar, mesajlar, sahne, ayarlar
   social.js          Arkadaşlar ve özel mesajlar
@@ -90,7 +143,8 @@ renderer/
   themes.js          Temalar ve resimden palet çıkarma
   themes/            Tema resimleri (özgün, telifsiz)
   assets/            Logo ve simge
-test/p2p.test.js     Çok kullanıcılı çekirdek testi (npm test)
+test/                Çekirdek ve birim testleri (npm test)
+docs/                README görselleri
 ```
 
 Veriler şu klasörlerde tutulur:

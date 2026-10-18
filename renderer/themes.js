@@ -8,6 +8,10 @@
 
 const THEMES = [
   { id: 'yanki', name: 'YANKI', image: null, accent: '#ff4f8b', accent2: '#18c8ff', bg: '#0b0a14' },
+  { id: 'football', name: 'Gece Maçı', image: 'football', accent: '#3ddc84', accent2: '#ffd34d', bg: '#07131c', genre: 'Futbol' },
+  { id: 'fps', name: 'Taktik HUD', image: 'fps', accent: '#ff8a2a', accent2: '#3de0c8', bg: '#0d1114', genre: 'FPS' },
+  { id: 'rpg', name: 'Kale Alacakaranlığı', image: 'rpg', accent: '#c48bff', accent2: '#ffb36b', bg: '#140b1e', genre: 'RPG' },
+  { id: 'racing', name: 'Gece Pisti', image: 'racing', accent: '#ff3b4f', accent2: '#ffd34d', bg: '#0b0912', genre: 'Yarış' },
   { id: 'neon', name: 'Neon Ufuk', image: 'neon', accent: '#ff3da5', accent2: '#ffb347', bg: '#12051f' },
   { id: 'space', name: 'Derin Uzay', image: 'space', accent: '#9b6bff', accent2: '#22d3ee', bg: '#070814' },
   { id: 'forest', name: 'Piksel Orman', image: 'forest', accent: '#f5c46b', accent2: '#7bd88f', bg: '#0c1418' },
@@ -45,14 +49,42 @@ function hslToHex (h, s, l) {
   return rgbToHex(f(0) * 255, f(8) * 255, f(4) * 255)
 }
 
-// Taban ve vurgu renklerinden tüm arayüz tonlarını üret
-function themeTokens (t) {
+// Taban ve vurgu renklerinden tüm arayüz tonlarını üret (koyu ya da açık mod)
+function themeTokens (t, light = false) {
   const [h, s] = rgbToHsl(...hexToRgb(t.bg))
   const sat = Math.min(s, 45)
   const shade = (l, sm = 1) => hslToHex(h, sat * sm, l)
   const [ah, as] = rgbToHsl(...hexToRgb(t.accent))
-  const accent = hslToHex(ah, Math.max(as, 55), 62)
+  const accent = hslToHex(ah, Math.max(as, 55), light ? 48 : 62)
+  const a2 = t.accent2 || hslToHex((ah + 40) % 360, 80, 62)
+  const accent2 = light ? hslToHex(rgbToHsl(...hexToRgb(a2))[0], Math.max(rgbToHsl(...hexToRgb(a2))[1], 55), 46) : a2
+  const common = {
+    '--accent': accent,
+    '--accent-2': accent2,
+    '--accent-rgb': hexToRgb(accent).join(','),
+    '--accent-2-rgb': hexToRgb(accent2).join(','),
+    '--accent-ink': rgbToHsl(...hexToRgb(accent))[2] > 70 ? '#111' : '#fff'
+  }
+  if (light) {
+    const lsat = Math.min(sat, 30)
+    const tint = (l, sm = 1) => hslToHex(h, lsat * sm, l)
+    return {
+      ...common,
+      '--bg-0': tint(93), '--bg-1': tint(98.5), '--bg-2': tint(95.5), '--bg-3': tint(92), '--bg-4': tint(87),
+      '--line': tint(88), '--line-2': tint(80),
+      '--panel-rgb': hexToRgb(tint(98.5)).join(','),
+      '--panel-2-rgb': hexToRgb(tint(100)).join(','),
+      '--fg-rgb': hexToRgb(hslToHex(h, 30, 14)).join(','),
+      '--sink-rgb': hexToRgb(hslToHex(h, 25, 30)).join(','),
+      '--sink-a': '.28',
+      '--wall-tint': '250, 250, 252',
+      '--text': hslToHex(h, 28, 11), '--text-2': hslToHex(h, 14, 34), '--text-3': hslToHex(h, 10, 50),
+      '--ink-mix': '#000',
+      '--green': '#14a35a', '--red': '#e5384a', '--yellow': '#c98a00', '--blue': '#2f7fe0', '--link': '#2b6fd6'
+    }
+  }
   return {
+    ...common,
     '--bg-0': shade(4),
     '--bg-1': shade(7.5),
     '--bg-2': shade(10.5, 0.9),
@@ -62,12 +94,21 @@ function themeTokens (t) {
     '--line-2': shade(24, 0.75),
     '--panel-rgb': hexToRgb(shade(7.5)).join(','),
     '--panel-2-rgb': hexToRgb(shade(11, 0.9)).join(','),
-    '--accent': accent,
-    '--accent-2': t.accent2 || hslToHex((ah + 40) % 360, 80, 62),
-    '--accent-rgb': hexToRgb(accent).join(','),
-    '--accent-2-rgb': hexToRgb(t.accent2 || accent).join(','),
-    '--accent-ink': rgbToHsl(...hexToRgb(accent))[2] > 70 ? '#111' : '#fff'
+    '--fg-rgb': '255, 255, 255',
+    '--sink-rgb': '0, 0, 0',
+    '--sink-a': '1',
+    '--wall-tint': '0, 0, 0',
+    '--text': '#eceaf6', '--text-2': '#b3b0c8', '--text-3': '#77738f',
+    '--ink-mix': '#fff',
+    '--green': '#3ddc84', '--red': '#ff4d5e', '--yellow': '#ffc24b', '--blue': '#5aa9ff', '--link': '#7ab8ff'
   }
+}
+
+// Koyu / açık / sistem
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
+function isLight (cfg) {
+  const mode = cfg?.mode || 'dark'
+  return mode === 'light' || (mode === 'system' && !darkQuery.matches)
 }
 
 let customImage = null
@@ -85,16 +126,27 @@ function currentTheme (cfg) {
 
 function applyTheme (cfg) {
   const t = currentTheme(cfg)
+  const light = isLight(cfg)
   const root = document.documentElement
-  for (const [k, v] of Object.entries(themeTokens(t))) root.style.setProperty(k, v)
+  for (const [k, v] of Object.entries(themeTokens(t, light))) root.style.setProperty(k, v)
   const hasImage = !!t.image
-  const url = t.image === 'custom' ? customImage : t.image ? `themes/${t.image}.jpg` : null
+  const file = t.image && t.image !== 'custom' ? (light ? `${t.image}-light` : t.image) : null
+  const url = t.image === 'custom' ? customImage : file ? `themes/${file}.jpg` : null
   root.style.setProperty('--wall-image', url ? `url("${url}")` : 'none')
-  root.style.setProperty('--wall-dim', String((cfg?.dim ?? (hasImage ? 45 : 0)) / 100))
-  root.style.setProperty('--wall-blur', (cfg?.blur ?? 0) + 'px')
+  // Açık modda arka plan beyaza doğru "soldurulur", koyu modda karartılır
+  const dim = cfg?.dim ?? (hasImage ? 45 : 0)
+  root.style.setProperty('--wall-dim', String((light ? Math.min(85, dim * 0.8 + (t.image === 'custom' ? 30 : 0)) : dim) / 100))
+  const blur = cfg?.blur ?? 0
+  root.style.setProperty('--wall-blur', blur + 'px')
+  root.style.setProperty('--wall-filter', blur > 0 ? `blur(${blur}px)` : 'none')
   root.style.setProperty('--panel-a', hasImage ? String(1 - (cfg?.glass ?? 30) / 100) : '1')
+  root.style.colorScheme = light ? 'light' : 'dark'
   document.body.classList.toggle('has-wall', hasImage)
+  document.body.classList.toggle('light', light)
+  document.body.classList.toggle('perf', !!cfg?.perf)
 }
+/* global settings */
+darkQuery.addEventListener?.('change', () => { if (typeof settings !== 'undefined' && settings.theme?.mode === 'system') applyTheme(settings.theme) })
 
 // Resimden baskın renkleri çıkar (k-ortalamalar) ve palet önerileri üret
 async function extractPalettes (dataUrl) {
@@ -141,4 +193,5 @@ window.extractPalettes = extractPalettes
 window.loadCustomThemeImage = loadCustomThemeImage
 window.themeTokens = themeTokens
 window.currentTheme = currentTheme
+window.isLight = isLight
 window.themeImage = { get: () => customImage, set: (v) => { customImage = v } }

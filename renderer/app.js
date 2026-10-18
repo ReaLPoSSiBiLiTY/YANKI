@@ -4,7 +4,13 @@
    curMeta, member, cacheProfile, profileOf, nameOf, colorOf, activityOf, actText, actIcon, actLine, avatar, avatarFull, md, mentionsMe,
    YT_RE, URL_RE, IMG_URL_RE, openModal, confirmModal, closePopup, openPopup, menu, pointAnchor, fileToDataURL, imageSize, resizeImage, pickImage, GIF_LIMITS, safeImg,
    BOT_DEFS, botAvatar, botsIn, botEnabledIn, welcomeText, renderBotReply, renderPoll, renderCmdHints, handleMusicCommand, musicAdd, musicSkip, musicStop, MusicPlayer, openMusicPanel, openBotsModal, openBotCard,
-   friendOf, friendStatusOf, isOnline, dmUnread, incomingCount, homeBadge, refreshDMs, renderHomeSidebar, renderHome, homeTabsHTML, activeNowHTML, dmProfileHTML, activityBlock, friendButton, renderDMComposer, friendAction, sendFriendCode, friendMoreMenu */
+   friendOf, friendStatusOf, isOnline, dmUnread, incomingCount, homeBadge, refreshDMs, renderHomeSidebar, renderHome, homeTabsHTML, activeNowHTML, dmProfileHTML, activityBlock, friendButton, renderDMComposer, friendAction, sendFriendCode, friendMoreMenu,
+   throttleRaf, isLight, plainText, mentionsToNames, namesToMentions, mentionMap, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator,
+   startDM, closeMiniDM, bindMiniDM, miniOnDM, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew */
+
+// Ses arayüzü kare başına en fazla bir kez çizilir; pencere gizliyken (küçültülmüş, oyunun arkasında)
+// requestAnimationFrame beklediği için hiç çizilmez, görünür olunca bir kez çizilir.
+const drawVoice = throttleRaf(() => { renderVoiceInSidebar(); renderVoiceCard(); renderDock(); renderStage(); renderHeader(); renderMeCard() })
 
 // =====================================================================
 // Başlatma ve olaylar
@@ -25,16 +31,22 @@ async function init () {
     me: S.me,
     settings: () => settings,
     toast,
-    onUpdate: () => { renderVoiceInSidebar(); renderVoiceCard(); renderDock(); renderStage(); renderHeader(); renderMeCard(); music?.sync() },
+    allowed: voiceAllowed,
+    // Kare başına en fazla bir kez çizilir; pencere gizliyken requestAnimationFrame beklediği için hiç çizilmez
+    onUpdate: () => { music?.sync(); drawVoice() },
     onSpeaking: (key, on) => $$(`[data-speak="${CSS.escape(key)}"]`).forEach(n => n.classList.toggle('speaking', on))
   })
   music = new MusicPlayer()
 
   api.on(onEvent)
   bindStatic()
+  bindMentions()
+  bindMiniDM()
+  api.updateInfo?.().then(i => { if (i) onUpdateAvailable(i) }).catch(() => {})
   api.activityConfig(settings.activity).then(a => { S.myAct = a; renderActivitySoon() }).catch(() => {})
   api.activities?.().then(list => { for (const x of list || []) S.acts.set(x.key, { act: x.act, at: Date.now() }); renderActivitySoon() }).catch(() => {})
 
+  maybeShowWhatsNew()
   if (!S.profile.name) openProfileSetup()
   for (const s of S.servers) refreshMeta(s.id)
   await refreshDMs()
@@ -60,11 +72,11 @@ const refreshMeta = debounce(async (serverId) => {
     if (!m.pending && !S.channel) { pickDefaultChannel(); if (S.channel) await loadMessages(true) }
     renderSidebar(); renderHeader(); renderMembers(); renderLayout(); renderComposerState()
   }
-  if (serverId === voice?.server) { renderVoiceCard(); renderDock(); music?.sync() }
+  if (serverId === voice?.server) { voice.recheckAccess(); renderVoiceCard(); renderDock(); music?.sync() }
   renderRail()
 }, 80)
 
-const reloadMessages = debounce(() => loadMessages(), 60)
+const reloadMessages = debounce(() => { if (!document.hidden) loadMessages() }, 60)
 const renderActivitySoon = (() => {
   let t
   return () => {
@@ -89,14 +101,17 @@ async function onEvent (ev) {
     case 'ops': {
       refreshMeta(ev.server)
       let touchCurrent = false
+      let touchMentions = false
       for (const o of ev.ops) {
         if (S.mode === 'server' && ev.server === S.server && (o.channel === S.channel || ['message-edit', 'message-delete', 'reaction', 'pin', 'profile', 'poll-vote', 'bot-config'].includes(o.type))) touchCurrent = true
         if (o.type === 'message' && o.author !== S.me) maybeNotify(ev.server, o)
+        if (o.type === 'message' && o.author !== S.me && Date.now() - o.ts < 600000 && mentionsMe(o.text) && !chatVisible(ev.server, o.channel)) { addMention(ev.server + ':' + o.channel); touchMentions = true }
         if (o.type === 'message') clearTyping(ev.server + ':' + o.channel, o.author)
         if (o.type === 'music' && ev.server === voice.server) music.sync()
         if (o.type === 'profile') refreshDMs()
       }
       if (touchCurrent) reloadMessages('cur')
+      if (touchMentions) { if (ev.server === S.server && S.mode === 'server') renderSidebar(); renderRail() }
       break
     }
     case 'peers':
@@ -113,19 +128,26 @@ async function onEvent (ev) {
       break
     case 'dm': {
       await refreshDMs()
+      const miniSeen = ev.ops.some(o => o.type === 'dm' && o.author !== S.me) && miniOnDM(ev.peer)
       for (const o of ev.ops) {
         if (o.author === S.me) continue
         if (o.type === 'friend-request') { notifyRaw(`${nameOf(ev.peer)}`, 'Sana arkadaşlık isteği gönderdi'); if (settings.sounds) voice.sound('friend') }
         if (o.type === 'friend-accept') { notifyRaw(`${nameOf(ev.peer)}`, 'Arkadaşlık isteğini kabul etti 🎉'); if (settings.sounds) voice.sound('friend') }
         if (o.type === 'dm') {
           clearTyping('dm:' + ev.peer, ev.peer)
-          const visible = document.hasFocus() && S.mode === 'home' && S.dm === ev.peer
-          if (!visible && settings.notify !== 'none') { notifyRaw(nameOf(ev.peer), o.text || (o.hasImage ? '📷 Resim' : '')); if (settings.sounds) voice.sound('message') }
+          const visible = (document.hasFocus() && S.mode === 'home' && S.dm === ev.peer) || miniSeen
+          if (!visible && settings.notify !== 'none') { notifyRaw(nameOf(ev.peer), plainText(o.text) || (o.hasImage ? '📷 Resim' : '')); if (settings.sounds) voice.sound('message') }
         }
       }
       if (S.mode === 'home' && S.dm === ev.peer) reloadMessages('cur')
       break
     }
+    case 'update-available':
+      onUpdateAvailable(ev.info)
+      break
+    case 'update-progress':
+      updateProgress(ev)
+      break
     case 'friends':
       refreshDMs()
       break
@@ -156,14 +178,16 @@ setInterval(() => renderTyping(), 1500)
 
 function notifyRaw (title, body) { api.notify(title, body) }
 
+const chatVisible = (serverId, channel) => document.hasFocus() && S.mode === 'server' && serverId === S.server && channel === S.channel && S.view === 'chat'
+
 function maybeNotify (serverId, o) {
   const meta = S.meta.get(serverId)
   const mention = mentionsMe(o.text)
-  const visible = document.hasFocus() && S.mode === 'server' && serverId === S.server && o.channel === S.channel && S.view === 'chat'
-  if (visible) return
+  if (chatVisible(serverId, o.channel)) return
+  if (Date.now() - o.ts > 600000) return // eşitlenen eski mesajlar için bildirim yok
   if (settings.notify === 'none' || (settings.notify === 'mentions' && !mention)) return
   const ch = meta?.channels?.find(c => c.id === o.channel)
-  api.notify(`${nameOf(o.author)}${ch ? ' · #' + ch.name : ''}`, o.text || (o.hasImage ? '📷 Resim' : ''))
+  api.notify(`${mention ? '📣 ' : ''}${nameOf(o.author)}${ch ? ' · #' + ch.name : ''}`, plainText(o.text) || (o.hasImage ? '📷 Resim' : o.locked ? '🔒 Şifreli mesaj' : ''))
   if (settings.sounds) voice.sound('message')
 }
 
@@ -288,6 +312,7 @@ function markRead () {
   if (c.kind === 'dm') ts = friendOf(c.key)?.lastTs || Date.now()
   else ts = curMeta()?.channels?.find(ch => ch.id === c.channel)?.lastTs || Date.now()
   const k = ctxKey()
+  if (mentionCount(k)) { clearMention(k); setTimeout(() => { renderSidebar(); renderRail() }, 30) }
   if ((S.lastRead[k] || 0) < ts) {
     S.lastRead[k] = ts
     save('lastRead', S.lastRead)
@@ -369,11 +394,12 @@ function renderRail () {
     const unread = meta && !meta.pending && meta.channels.some(c => isUnread(s.id, c))
     const icn = safeImg(s.icon)
     const inVoice = voice?.server === s.id
+    const mc = serverMentions(s.id)
     return `
       <button class="rail-item ${S.mode === 'server' && s.id === S.server ? 'active' : ''} ${unread ? 'unread' : ''}" data-act="server" data-id="${s.id}" title="${esc(s.name)}">
         <span class="pill"></span>
         ${icn ? `<img src="${icn}" alt="">` : `<span class="rail-initials" style="background:${hashColor(s.id)}">${esc(initials(s.name))}</span>`}
-        ${s.pending ? '<span class="rail-badge sync">…</span>' : ''}
+        ${s.pending ? '<span class="rail-badge sync">…</span>' : mc ? `<span class="rail-badge">${mc > 99 ? '99+' : mc}</span>` : ''}
         ${inVoice ? `<span class="rail-voice">${icon('volume', 11)}</span>` : ''}
       </button>`
   }).join('')
@@ -385,8 +411,9 @@ function renderRail () {
     <div class="rail-sep"></div>
     <div class="rail-list">${items}
       <button class="rail-item add" data-act="add-server" title="Sunucu ekle">${icon('plus', 22)}</button>
-    </div>`
-  const unreadCount = S.servers.filter(s => { const m = S.meta.get(s.id); return m && !m.pending && m.channels.some(c => isUnread(s.id, c)) }).length + hb
+    </div>
+    ${S.update ? `<button class="rail-item update" data-act="update" title="Güncelle: YANKI ${esc(S.update.version)}">${icon('download', 22)}<span class="rail-upd">Güncelle</span></button>` : ''}`
+  const unreadCount = S.servers.filter(s => { const m = S.meta.get(s.id); return m && !m.pending && m.channels.some(c => isUnread(s.id, c)) }).length + hb + S.servers.reduce((n, s) => n + serverMentions(s.id), 0)
   api.badge(unreadCount)
 }
 
@@ -423,7 +450,7 @@ function renderSidebar () {
 
   box.innerHTML = groups.map(({ cat, list }) => {
     const collapsed = cat && S.collapsed[cat.id]
-    const visible = collapsed ? list.filter(c => c.id === S.channel || (voice.server === S.server && voice.channel === c.id) || isUnread(S.server, c)) : list
+    const visible = collapsed ? list.filter(c => c.id === S.channel || (voice.server === S.server && voice.channel === c.id) || isUnread(S.server, c) || mentionCount(S.server + ':' + c.id)) : list
     return `
       <div class="cat">
         ${cat ? `
@@ -441,6 +468,8 @@ function channelRow (c, m) {
   const active = c.kind === 'text' ? (c.id === S.channel && S.view === 'chat') : (voice.server === S.server && voice.channel === c.id)
   const unread = isUnread(S.server, c)
   const bots = botsIn(m, c.id)
+  const mc = mentionCount(S.server + ':' + c.id)
+  const gnames = (c.groups || []).map(g => groupById(m, g)?.name).filter(Boolean)
   return `
     <div class="ch ${c.kind} ${active ? 'active' : ''} ${unread ? 'unread' : ''}" data-act="channel" data-id="${c.id}" title="${esc(c.topic || c.name)}">
       <span class="ch-icon">${icon(c.kind === 'voice' ? 'volume' : 'hash', 17)}</span>
@@ -450,6 +479,8 @@ function channelRow (c, m) {
       </span>
       ${bots.size ? `<span class="ch-bots" title="Bu kanaldaki botlar: ${[...bots].map(b => BOT_DEFS[b].name).join(', ')}">${icon('bot', 13)}</span>` : ''}
       ${c.kind === 'voice' && c.userLimit ? `<span class="ch-limit">${voice.participants(S.server, c.id).length}/${c.userLimit}</span>` : ''}
+      ${mc ? `<span class="ch-mention" title="Senden bahsedildi">@${mc > 9 ? '9+' : mc}</span>` : ''}
+      ${c.private ? `<span class="ch-lock ${c.hasKey ? '' : 'wait'}" title="Özel kanal${gnames.length ? ': ' + esc(gnames.join(', ')) : ''}${c.hasKey ? '' : ' — şifreleme anahtarı bekleniyor'}">${icon('lock', 13)}</span>` : ''}
       ${m.isAdmin ? `<button class="mini ch-edit" data-act="edit-channel" data-id="${c.id}" title="Kanalı düzenle">${icon('settings', 14)}</button>` : ''}
     </div>
     ${c.kind === 'voice' ? `<div class="voice-users" data-voice="${c.id}"></div>` : ''}`
@@ -474,7 +505,7 @@ function renderVoiceInSidebar () {
           ${actLine(p.key, 'tiny')}
         </span>
         <span class="vu-flags">
-          ${p.screen ? '<span class="live">CANLI</span>' : ''}
+          ${p.screen ? `<span class="live" ${!p.self ? `data-act="watch" data-key="${p.key}" title="Yayını izle"` : ''}>CANLI</span>` : ''}
           ${p.cam ? icon('video', 14) : ''}
           ${muteIcons(p)}
         </span>
@@ -648,9 +679,10 @@ function renderMessages (forceBottom = false) {
     } else {
       html += `
         <div class="chan-welcome">
-          <div class="cw-icon">${icon('hash', 40)}</div>
+          <div class="cw-icon">${icon(ch?.private ? 'lock' : 'hash', 40)}</div>
           <h2>#${esc(ch?.name || '')} kanalına hoş geldin!</h2>
           <p>Bu, #${esc(ch?.name || '')} kanalının başlangıcı.${ch?.topic ? ' ' + esc(ch.topic) : ''}</p>
+          ${ch?.private ? `<p class="cw-private">${icon('lock', 14)} Özel kanal · yalnızca ${(ch.groups || []).map(g => groupById(m, g)).filter(Boolean).map(g => groupChip(g)).join(' ') || 'yöneticiler'} görebilir. Mesajlar uçtan uca şifrelenir.</p>` : ''}
         </div>`
     }
   } else if (!q) {
@@ -682,12 +714,12 @@ function renderMessages (forceBottom = false) {
     const mem = m ? member(x.author) : null
     html += `
       <div class="msg ${grouped ? 'grouped' : ''} ${mentionsMe(x.text) ? 'mentioned' : ''} ${S.editing === x.id ? 'editing' : ''}" data-id="${x.id}">
-        ${x.reply ? `<div class="reply-ref" data-act="jump" data-id="${x.reply.id}">${avatar(x.reply.author, 16)}<span class="rr-name">${esc(nameOf(x.reply.author))}</span><span class="rr-text">${esc(x.reply.text || (x.reply.hasImage ? '📷 Resim' : ''))}</span></div>` : ''}
+        ${x.reply ? `<div class="reply-ref" data-act="jump" data-id="${x.reply.id}">${avatar(x.reply.author, 16)}<span class="rr-name">${esc(nameOf(x.reply.author))}</span><span class="rr-text">${esc(plainText(x.reply.text) || (x.reply.hasImage ? '📷 Resim' : ''))}</span></div>` : ''}
         <div class="msg-row">
           <div class="msg-gutter">${grouped ? `<span class="msg-hover-time">${fmtHM(x.ts)}</span>` : `<button class="av-btn" data-act="user" data-key="${x.author}">${avatar(x.author, 42)}</button>`}</div>
           <div class="msg-body">
             ${grouped ? '' : `<div class="msg-head"><button class="msg-name" data-act="user" data-key="${x.author}" ${color ? `style="color:${color}"` : ''}>${esc(nameOf(x.author))}</button>${mem?.owner ? `<span class="tag owner" title="Sunucu sahibi">${icon('crown', 12)}</span>` : mem?.admin ? `<span class="tag admin" title="Yönetici">${icon('shield', 12)}</span>` : ''}<span class="msg-time">${esc(fmtTime(x.ts))}</span>${pins.has(x.id) ? `<span class="pinned">${icon('pin', 12)}</span>` : ''}</div>`}
-            ${x.poll ? renderPoll(x) : x.text ? `<div class="msg-text ${x.bot ? 'cmd-text' : ''}">${md(x.text)}${x.edited ? '<span class="edited">(düzenlendi)</span>' : ''}</div>` : ''}
+            ${x.locked ? `<div class="msg-text locked">${icon('lock', 14)} Şifreli mesaj — bu kanalın anahtarı sana henüz ulaşmadı.</div>` : x.poll ? renderPoll(x) : x.text ? `<div class="msg-text ${x.bot ? 'cmd-text' : ''}">${md(x.text)}${x.edited ? '<span class="edited">(düzenlendi)</span>' : ''}</div>` : ''}
             ${renderBotReply(x)}
             ${x.attachments.length ? `<div class="atts n${Math.min(x.attachments.length, 4)}">${x.attachments.map(a => safeImg(a.data) ? `<img class="att-img" src="${a.data}" alt="${esc(a.name)}" data-act="lightbox" loading="lazy">` : '').join('')}</div>` : ''}
             ${x.poll ? '' : messageEmbeds(x)}
@@ -697,7 +729,7 @@ function renderMessages (forceBottom = false) {
             ${['👍', '❤️', '😂'].map(e => `<button data-act="react" data-id="${x.id}" data-emoji="${e}" title="Tepki ver">${e}</button>`).join('')}
             <button data-act="react-pick" data-id="${x.id}" title="Tepki ekle">${icon('smile', 17)}</button>
             <button data-act="reply" data-id="${x.id}" title="Yanıtla">${icon('reply', 17)}</button>
-            ${own && !x.poll ? `<button data-act="edit" data-id="${x.id}" title="Düzenle">${icon('edit', 17)}</button>` : ''}
+            ${own && !x.poll && !x.locked ? `<button data-act="edit" data-id="${x.id}" title="Düzenle">${icon('edit', 17)}</button>` : ''}
             ${isMod ? `<button data-act="pin" data-id="${x.id}" title="${pins.has(x.id) ? 'Sabitlemeyi kaldır' : 'Sabitle'}">${icon('pin', 17)}</button>` : ''}
             <button data-act="copy" data-id="${x.id}" title="Metni kopyala">${icon('copy', 17)}</button>
             ${own || isMod ? `<button class="danger" data-act="delete" data-id="${x.id}" title="Sil">${icon('trash', 17)}</button>` : ''}
@@ -766,6 +798,15 @@ function renderComposerState () {
     input.placeholder = ch ? `#${ch.name} kanalına mesaj gönder` : 'Mesaj gönder'
   }
   renderDMComposer()
+  $('#btn-poll').hidden = !canPoll()
+  if (S.mode === 'server') {
+    const ch = curMeta()?.channels?.find(c => c.id === S.channel)
+    const wait = ch && ch.private && !ch.hasKey
+    $('.composer-box').hidden = !!wait
+    const lock = $('#dm-lock')
+    lock.hidden = !wait
+    if (wait) lock.innerHTML = `<span>${icon('key', 18)} Bu özel kanalın şifreleme anahtarı bekleniyor. Anahtarı olan bir üye (ör. yönetici) çevrim içi olduğunda otomatik gelir.</span>`
+  }
   const rb = $('#reply-bar')
   if (S.reply) {
     const r = S.msgs.find(x => x.id === S.reply)
@@ -807,7 +848,7 @@ async function send () {
   if (!c) return
   try {
     if (S.editing) {
-      if (text.trim()) await postCtx('message-edit', { target: S.editing, text })
+      if (text.trim()) await postCtx('message-edit', { target: S.editing, text: namesToMentions(text) })
       S.editing = null
     } else {
       if (!text.trim() && !S.attachments.length) return
@@ -819,7 +860,7 @@ async function send () {
       }
       const size = S.attachments.reduce((n, a) => n + a.data.length, 0)
       if (size > 10.5 * 1024 * 1024) { toast('Ekler çok büyük (toplam en fazla ~7 MB).'); return }
-      await postCtx('message', { text, attachments: S.attachments, replyTo: S.reply })
+      await postCtx('message', { text: namesToMentions(text), attachments: S.attachments, replyTo: S.reply })
       S.reply = null
       S.attachments = []
     }
@@ -829,6 +870,8 @@ async function send () {
   }
   lastTypingSent = 0
   input.value = ''
+  mentionMap.clear()
+  closeMentions()
   autoGrow()
   renderCmdHints()
   renderComposerState()
@@ -916,6 +959,80 @@ function videoFor (stream) {
   return v
 }
 
+// Sahne, karoları yeniden oluşturmadan günceller: video öğeleri ve tam ekran korunur.
+const tileEls = new Map()
+let stageShell = null // { layout, root, main, strip }
+
+function stageFullscreenIn (node) {
+  const f = document.fullscreenElement
+  return !!(f && node && (f === node || node.contains(f) || f.contains(node)))
+}
+
+function tileTop (t) {
+  if (t.kind !== 'screen') return ''
+  const n = (t.viewers || []).length
+  const names = (t.viewers || []).map(k => nameOf(k)).join(', ')
+  return `<span class="tile-viewers" title="${esc(names || 'Henüz izleyen yok')}">${icon('eye', 14)} ${n}${t.self ? ' izleyici' : ''}</span>`
+}
+
+function tileButtons (t) {
+  let b = ''
+  if (t.kind === 'screen' && !t.self && t.watching) b += `<button class="tile-btn danger" data-act="unwatch" data-key="${t.key}" title="Yayını kapat">${icon('x', 15)}<span>Yayını Kapat</span></button>`
+  if (t.kind !== 'avatar' && t.kind !== 'music' && (t.stream || t.self)) b += `<button class="tile-btn" data-act="tile-full" title="Tam ekran">${icon('maximize', 16)}</button>`
+  return b
+}
+
+function updateTile (div, t, big, parts) {
+  div.className = `tile ${t.kind} ${big ? 'big' : ''} ${t.kind === 'screen' && !t.watching ? 'offer' : ''}`
+  if (t.kind === 'music') {
+    $('.tile-label', div).innerHTML = `${icon('music', 14)}<span class="ellipsis">${esc(t.label)}</span><small>Müzik Çalar</small>`
+    return
+  }
+  const p = parts.find(x => x.key === t.key) || {}
+  const label = `${t.kind === 'screen' ? '<span class="live">CANLI</span>' : ''}<span>${esc(nameOf(t.key))}${t.kind === 'screen' ? ' · Ekran' : ''}</span>${t.label ? `<small>${esc(t.label)}</small>` : ''}${muteIcons(p, 15)}`
+  const lab = $('.tile-label', div)
+  if (lab._h !== label) { lab.innerHTML = label; lab._h = label }
+  const top = tileTop(t)
+  const topEl = $('.tile-top', div)
+  if (topEl._h !== top) { topEl.innerHTML = top; topEl._h = top }
+  const btns = tileButtons(t)
+  const bEl = $('.tile-btns', div)
+  if (bEl._h !== btns) { bEl.innerHTML = btns; bEl._h = btns }
+
+  const media = $('.tile-media', div)
+  let sig
+  if (t.kind === 'avatar') {
+    const act = activityOf(t.key)
+    const pr = profileOf(t.key)
+    sig = ['av', t.key, big, act ? actText(act) : '', t.conn || '', pr?.avatar?.length || 0, pr?.banner?.length || 0].join('|')
+    if (media._sig !== sig) {
+      const bad = t.conn && t.conn !== 'connected'
+      media.innerHTML = `<div class="tile-av">${avatar(t.key, big ? 120 : 86)}</div>${act ? `<div class="tile-act">${actIcon(act, 16)}<span class="ellipsis">${esc(actText(act))}</span></div>` : ''}${bad ? `<div class="tile-conn">${t.conn === 'failed' || t.conn === 'disconnected' ? 'Bağlantı onarılıyor…' : 'Bağlanıyor…'}<button class="btn small" data-act="peer-reconnect" data-key="${t.key}">${icon('signal', 14)} Yeniden bağlan</button></div>` : ''}`
+      if (pr?.banner && safeImg(pr.banner)) div.style.setProperty('--tile-bg', `url(${pr.banner})`); else div.style.removeProperty('--tile-bg')
+      div.style.setProperty('--tile-accent', pr?.color || hashColor(t.key))
+    }
+  } else if (t.kind === 'screen' && !t.self && !t.watching) {
+    sig = ['offer', t.key, big].join('|')
+    if (media._sig !== sig) {
+      media.innerHTML = `<div class="watch-offer">${avatar(t.key, big ? 72 : 48)}<div><b>${esc(nameOf(t.key))}</b> ekranını paylaşıyor</div><button class="btn primary" data-act="watch" data-key="${t.key}">${icon('play', 16)} Yayını İzle</button></div>`
+    }
+  } else if (t.stream) {
+    const v = videoFor(t.stream)
+    sig = 'v|' + t.stream.id
+    if (media._sig !== sig || v.parentNode !== media) { media.replaceChildren(v); v.play().catch(() => {}) }
+    v.classList.toggle('mirror', !!(t.self && t.kind === 'cam'))
+  } else {
+    sig = 'wait|' + t.id
+    if (media._sig !== sig) media.innerHTML = '<div class="tile-conn"><div class="spinner small"></div> Görüntü bekleniyor…</div>'
+  }
+  media._sig = sig
+}
+
+function makeTile (t) {
+  if (t.kind === 'music') return el('<div class="tile music" data-tile="music"><div class="tile-media"><div id="music-slot"></div></div><div class="tile-label"></div></div>')
+  return el(`<div class="tile" data-tile="${esc(t.id)}"><div class="tile-media"></div><div class="tile-top"></div><div class="tile-btns"></div><div class="tile-label"></div></div>`)
+}
+
 function renderStage () {
   const stage = $('#stage')
   const show = S.mode === 'server' && S.view === 'stage' && voice.active && voice.server === S.server
@@ -926,58 +1043,52 @@ function renderStage () {
   const mp = music?.state?.playing
   if (mp && music.iframe) tiles.splice(1, 0, { id: 'music', kind: 'music', key: 'music', label: mp.video.title })
   if (S.focusTile && !tiles.some(t => t.id === S.focusTile)) S.focusTile = null
-  const used = new Set()
   const parts = voice.participants(voice.server, voice.channel)
-  const tileEl = (t, big) => {
-    if (t.kind === 'music') {
-      return el(`<div class="tile music ${big ? 'big' : ''}" data-tile="music"><div class="tile-media"><div id="music-slot"></div></div>
-        <div class="tile-label">${icon('music', 14)}<span class="ellipsis">${esc(t.label)}</span><small>Müzik Çalar</small></div></div>`)
-    }
-    const p = parts.find(x => x.key === t.key) || {}
-    const div = el(`
-      <div class="tile ${t.kind} ${big ? 'big' : ''}" data-tile="${t.id}">
-        <div class="tile-media"></div>
-        <div class="tile-label">
-          ${t.kind === 'screen' ? '<span class="live">CANLI</span>' : ''}
-          <span>${esc(nameOf(t.key))}${t.kind === 'screen' ? ' · Ekran' : ''}</span>
-          ${t.label ? `<small>${esc(t.label)}</small>` : ''}
-          ${muteIcons(p, 15)}
-        </div>
-        ${t.kind !== 'avatar' ? `<button class="tile-full" data-act="tile-full" title="Tam ekran">${icon('maximize', 16)}</button>` : ''}
-      </div>`)
-    const media = $('.tile-media', div)
-    if (t.kind === 'avatar') {
-      const act = activityOf(t.key)
-      media.innerHTML = `<div class="tile-av">${avatar(t.key, big ? 120 : 86)}</div>${act ? `<div class="tile-act">${actIcon(act, 16)}<span class="ellipsis">${esc(actText(act))}</span></div>` : ''}${t.conn && t.conn !== 'connected' ? `<div class="tile-conn">${t.conn === 'failed' ? 'Bağlantı onarılıyor…' : 'Bağlanıyor…'}</div>` : ''}`
-      const pr = profileOf(t.key)
-      if (pr?.banner && safeImg(pr.banner)) div.style.setProperty('--tile-bg', `url(${pr.banner})`)
-      div.style.setProperty('--tile-accent', pr?.color || hashColor(t.key))
-    } else if (t.stream) {
-      const v = videoFor(t.stream)
-      used.add(t.stream.id)
-      v.classList.toggle('mirror', !!(t.self && t.kind === 'cam'))
-      media.appendChild(v)
-      v.play().catch(() => {})
-    } else {
-      media.innerHTML = '<div class="tile-conn"><div class="spinner small"></div> Görüntü bekleniyor…</div>'
-    }
-    return div
-  }
-
-  stage.innerHTML = ''
   const focus = S.focusTile && tiles.find(t => t.id === S.focusTile)
-  if (focus) {
-    const wrap = el('<div class="stage-focus"><div class="focus-main"></div><div class="focus-strip"></div></div>')
-    $('.focus-main', wrap).appendChild(tileEl(focus, true))
-    for (const t of tiles) if (t !== focus) $('.focus-strip', wrap).appendChild(tileEl(t, false))
-    stage.appendChild(wrap)
-  } else {
-    const grid = el(`<div class="stage-grid n${Math.min(tiles.length, 9)}"></div>`)
-    for (const t of tiles) grid.appendChild(tileEl(t, false))
-    stage.appendChild(grid)
+  const layout = !tiles.length ? 'empty' : focus ? 'focus' : 'grid'
+  const fsLocked = stageFullscreenIn(stage)
+
+  if (!stageShell || stageShell.layout !== layout || !stage.contains(stageShell.root)) {
+    if (fsLocked && stageShell) {
+      // Tam ekrandayken düzeni değiştirme; yalnızca içerikleri güncelle
+    } else {
+      let root
+      if (layout === 'empty') root = el('<div class="empty-card"><p>Kanalda kimse yok.</p></div>')
+      else if (layout === 'focus') root = el('<div class="stage-focus"><div class="focus-main"></div><div class="focus-strip"></div></div>')
+      else root = el('<div class="stage-grid"></div>')
+      stage.replaceChildren(root)
+      stageShell = { layout, root, main: layout === 'focus' ? $('.focus-main', root) : root, strip: layout === 'focus' ? $('.focus-strip', root) : root }
+    }
   }
-  if (!tiles.length) stage.innerHTML = '<div class="empty-card"><p>Kanalda kimse yok.</p></div>'
-  for (const [id, v] of videoEls) if (!used.has(id)) { v.srcObject = null; videoEls.delete(id) }
+  const sh = stageShell
+  if (sh.layout === 'grid') sh.root.className = `stage-grid n${Math.min(tiles.length, 9)}`
+
+  const keep = new Set()
+  const place = (node, parent, index) => {
+    if (parent.children[index] === node) return
+    if (stageFullscreenIn(node)) return // tam ekrandaki karoyu yerinden oynatma
+    parent.insertBefore(node, parent.children[index] || null)
+  }
+  let stripIdx = 0
+  tiles.forEach((t, i) => {
+    let node = tileEls.get(t.id)
+    if (!node) { node = makeTile(t); tileEls.set(t.id, node) }
+    keep.add(t.id)
+    const big = sh.layout === 'focus' && t === focus
+    updateTile(node, t, big, parts)
+    if (sh.layout === 'empty') return
+    if (sh.layout === 'focus') { if (big) place(node, sh.main, 0); else place(node, sh.strip, stripIdx++) } else place(node, sh.root, i)
+  })
+  for (const [id, node] of tileEls) {
+    if (keep.has(id)) continue
+    if (document.fullscreenElement && stageFullscreenIn(node)) document.exitFullscreen().catch(() => {})
+    node.remove()
+    tileEls.delete(id)
+  }
+  const used = new Set(tiles.filter(t => t.stream && (t.kind !== 'screen' || t.self || t.watching)).map(t => t.stream.id))
+  for (const [id, v] of videoEls) {
+    if (!used.has(id)) { v.srcObject = null; v.remove(); videoEls.delete(id) } else if (v.paused && v.isConnected) v.play().catch(() => {})
+  }
   music?.position()
 }
 
@@ -1038,6 +1149,7 @@ function serverMenu (anchor) {
     items.push('-',
       { label: 'Kanal oluştur', icon: 'plus', onClick: () => channelModal(null, null) },
       { label: 'Kategori oluştur', icon: 'folderPlus', onClick: () => categoryModal(null) },
+      { label: 'Gruplar ve erişim', icon: 'lock', onClick: () => openGroupsModal() },
       { label: 'Botlar', icon: 'bot', onClick: openBotsModal },
       { label: 'Sunucu ayarları', icon: 'settings', onClick: serverSettingsModal })
   }
@@ -1068,6 +1180,12 @@ function channelModal (channelId, categoryId) {
       <label>Konu / açıklama<input id="ch-topic" maxlength="200" value="${esc(ch?.topic || '')}" placeholder="İsteğe bağlı"></label>
       <label>Kategori<select id="ch-cat"><option value="">— Kategorisiz —</option>${m.categories.map(c => `<option value="${c.id}" ${(ch ? ch.category : categoryId) === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
       <label class="voice-only">Kullanıcı sınırı (0 = sınırsız)<input id="ch-limit" type="number" min="0" max="99" value="${ch?.userLimit || 0}"></label>
+      <h4>${icon('lock', 13)} Erişim</h4>
+      ${m.groups.length ? `
+        <div class="access-groups">
+          <p class="muted small">Hiçbir grup seçmezsen kanal herkese açıktır. Grup seçersen yalnızca o gruplardaki üyeler (ve yöneticiler) kanalı görür; metin mesajları şifrelenir.</p>
+          ${m.groups.map(g => `<label class="chip gpick" style="--gc:${g.color}"><input type="checkbox" data-grp="${g.id}" ${(ch?.groups || []).includes(g.id) ? 'checked' : ''}><span><i></i>${esc(g.name)} <small>${g.members.length}</small></span></label>`).join('')}
+        </div>` : `<p class="muted small">Kanalı yalnızca belirli kişilere açmak için önce bir grup oluştur. <button class="link-like" type="button" id="ch-groups">Grupları yönet</button></p>`}
     </div>`)
   const actions = []
   if (ch) actions.push({ label: 'Kanalı sil', kind: 'danger left', onClick: async () => { if (await confirmModal('Kanalı sil', `#${esc(ch.name)} kanalı herkes için silinecek.`, 'Sil')) await api.post(S.server, 'channel-update', { target: ch.id, deleted: true }) } })
@@ -1079,7 +1197,7 @@ function channelModal (channelId, categoryId) {
       if (!name) { toast('Kanal adı gerekli.'); return false }
       const kind = ch ? ch.kind : $('input[name=kind]:checked', node).value
       const finalName = kind === 'text' ? name.toLowerCase().replace(/\s+/g, '-') : name
-      const data = { name: finalName, topic: $('#ch-topic', node).value, category: $('#ch-cat', node).value || null, userLimit: +$('#ch-limit', node).value || 0 }
+      const data = { name: finalName, topic: $('#ch-topic', node).value, category: $('#ch-cat', node).value || null, userLimit: +$('#ch-limit', node).value || 0, groups: $$('[data-grp]:checked', node).map(x => x.dataset.grp) }
       if (ch) await api.post(S.server, 'channel-update', { target: ch.id, ...data })
       else {
         const siblings = m.channels.filter(c => c.category === data.category)
@@ -1090,6 +1208,7 @@ function channelModal (channelId, categoryId) {
   const mdl = openModal({ title: ch ? 'Kanalı düzenle' : 'Kanal oluştur', body, actions })
   $$('input[name=kind]', mdl.node).forEach(r => r.addEventListener('change', () => { $('.voice-only', mdl.node).hidden = !(r.value === 'voice' && r.checked) }))
   $('.voice-only', mdl.node).hidden = !ch || ch.kind !== 'voice'
+  $('#ch-groups', mdl.node)?.addEventListener('click', () => { mdl.close(); openGroupsModal() })
 }
 
 function categoryModal (catId) {
@@ -1189,6 +1308,8 @@ function openProfileCard (key, anchor) {
           ${mem.admin && !mem.owner ? `<span class="role blue">${icon('shield', 13)} Yönetici</span>` : ''}
           ${!mem.admin ? '<span class="role">Üye</span>' : ''}
           ${fs === 'friends' ? `<span class="role accent">${icon('userCheck', 13)} Arkadaş</span>` : ''}
+          ${(mem.groups || []).map(g => groupById(m, g)).filter(Boolean).map(g => groupChip(g, 'role')).join('')}
+          ${m.isAdmin ? `<button class="role add" id="pc-groups" title="Gruplara ekle/çıkar">${icon('plus', 12)} Grup</button>` : ''}
         </div>` : ''}
         ${act ? activityBlock(act) : ''}
         ${p.bio ? `<h5>Hakkımda</h5><div class="pc-bio">${md(p.bio)}</div>` : ''}
@@ -1206,6 +1327,7 @@ function openProfileCard (key, anchor) {
   const pop = openPopup(html, anchor, { align, cls: 'pcard-pop' })
   $('#pc-edit', pop)?.addEventListener('click', () => { closePopup(); openSettings('profile') })
   $('#pc-mention', pop)?.addEventListener('click', () => { closePopup(); const t = $('#input'); t.value += (t.value && !t.value.endsWith(' ') ? ' ' : '') + '@' + nameOf(key) + ' '; t.focus() })
+  $('#pc-groups', pop)?.addEventListener('click', (e) => { e.stopPropagation(); groupMenu(key, e.currentTarget) })
   $('#pc-vol', pop)?.addEventListener('input', (e) => voice.setUserVolume(key, e.target.value / 100))
   $('#pc-admin', pop)?.addEventListener('click', async () => { closePopup(); await api.post(S.server, 'role-set', { user: key, role: mem?.admin ? 'member' : 'admin' }) })
   $('#pc-kick', pop)?.addEventListener('click', async () => { closePopup(); if (await confirmModal('Üyeyi at', `${esc(nameOf(key))} sunucudan atılacak (davet koduyla yeniden katılabilir).`, 'At')) await api.post(S.server, 'kick', { user: key }) })
@@ -1360,12 +1482,16 @@ async function openSettings (tab = 'profile') {
       const custom = themeImage.get()
       if (cur.id === 'custom' && custom && !palettes) palettes = await extractPalettes(custom).catch(() => [])
       const t = currentTheme(cur)
+      const light = isLight(cur)
+      const modes = [['dark', 'Koyu', 'moon'], ['light', 'Açık', 'sun'], ['system', 'Sistem', 'monitor']]
       pane.innerHTML = `
         <div class="form">
+          <h4>Mod</h4>
+          <div class="mode-seg">${modes.map(([k, l, i]) => `<button class="${(cur.mode || 'dark') === k ? 'on' : ''}" data-mode="${k}">${icon(i, 18)}<span>${l}</span></button>`).join('')}</div>
           <h4>Tema</h4>
           <div class="theme-grid">
             ${THEMES.map(th => `<button class="theme-card ${cur.id === th.id ? 'on' : ''}" data-theme="${th.id}">
-              <span class="tc-img" style="${th.image ? `background-image:url(themes/${th.image}-thumb.jpg)` : `background:radial-gradient(circle at 25% 30%, ${th.accent}66, transparent 55%), radial-gradient(circle at 80% 85%, ${th.accent2}55, transparent 55%), ${th.bg}`}"></span>
+              <span class="tc-img" style="${th.image ? `background-image:url(themes/${th.image}${light ? '-light' : ''}-thumb.jpg)` : `background:radial-gradient(circle at 25% 30%, ${th.accent}66, transparent 55%), radial-gradient(circle at 80% 85%, ${th.accent2}55, transparent 55%), ${light ? '#f3f2f8' : th.bg}`}">${th.genre ? `<em class="tc-genre">${esc(th.genre)}</em>` : ''}</span>
               <span class="tc-name"><i style="background:${th.accent}"></i><i style="background:${th.accent2}"></i>${esc(th.name)}</span>
             </button>`).join('')}
             <button class="theme-card custom ${cur.id === 'custom' ? 'on' : ''}" data-theme="custom">
@@ -1389,7 +1515,10 @@ async function openSettings (tab = 'profile') {
           <label>Karartma <input type="range" data-k="dim" min="0" max="85" value="${cur.dim}"></label>
           <label>Bulanıklık <input type="range" data-k="blur" min="0" max="30" value="${cur.blur}"></label>
           <label>Panel saydamlığı <input type="range" data-k="glass" min="0" max="60" value="${cur.glass}"></label>
-          <p class="muted small">Arka plan ayarları resimli temalarda geçerlidir. Tema resimleri YANKI için özel olarak üretilmiştir ve serbestçe kullanılabilir.</p>
+          <p class="muted small">Arka plan ayarları resimli temalarda geçerlidir. Tema resimleri YANKI için kodla üretilmiş özgün çalışmalardır; hiçbir oyun, takım ya da markaya ait içerik kullanılmaz.</p>
+          <h4>Performans</h4>
+          <label class="check"><input type="checkbox" id="ap-perf" ${cur.perf ? 'checked' : ''}> ${icon('zap', 16)} Performans modu</label>
+          <p class="muted small">Cam bulanıklığını, animasyonları ve geçiş efektlerini kapatır. Ekran kartı zayıf bilgisayarlarda ya da oyun oynarken önerilir.</p>
         </div>`
       const commit = () => { applyTheme(settings.theme); saveSettings() }
       const uploadThemeImage = async () => {
@@ -1419,6 +1548,8 @@ async function openSettings (tab = 'profile') {
       $('#ap-accent', pane)?.addEventListener('input', e => { settings.theme.accentOverride = e.target.value; commit() })
       $('#ap-accent-reset', pane)?.addEventListener('click', () => { delete settings.theme.accentOverride; commit(); show('appearance') })
       $$('[data-k]', pane).forEach(i => i.addEventListener('input', () => { settings.theme[i.dataset.k] = +i.value; commit() }))
+      $$('[data-mode]', pane).forEach(b => b.addEventListener('click', () => { settings.theme.mode = b.dataset.mode; commit(); show('appearance') }))
+      $('#ap-perf', pane).addEventListener('change', e => { settings.theme.perf = e.target.checked; commit() })
     } else if (k === 'activity') {
       const a = settings.activity
       pane.innerHTML = `
@@ -1497,7 +1628,7 @@ async function openSettings (tab = 'profile') {
       pane.innerHTML = `
         <div class="form">
           <label>Varsayılan kalite<select id="sc-q">${Object.entries(SCREEN_QUALITY).map(([key, q]) => `<option value="${key}" ${settings.screenQuality === key ? 'selected' : ''}>${q.label} — en fazla ${(q.bitrate / 1e6).toFixed(0)} Mbps</option>`).join('')}</select></label>
-          <p class="muted small">Ekran paylaşımı eşler arası doğrudan gönderilir. Her izleyici için ayrı bir akış yüklenir; 1080p60'ta 3 izleyici ≈ 27 Mbps yükleme hızı gerektirir. Bağlantın yavaşsa 1080p30 veya 720p seç.</p>
+          <p class="muted small">Ekran paylaşımı eşler arası doğrudan gönderilir ve yalnızca "Yayını İzle" diyen kişilere gider; izleyen yoksa bilgisayarın kodlama yapmaz. Her izleyici için ayrı bir akış yüklenir: 1080p60'ta 3 izleyici ≈ 27 Mbps yükleme hızı gerektirir. Oyunda takılma olursa 1080p30 veya 720p seç. Mümkünse donanım hızlandırmalı H.264 kullanılır.</p>
           ${S.platform === 'win32' ? `
             <label class="check"><input type="checkbox" id="sc-audio" ${settings.screenAudio ? 'checked' : ''}> Tüm ekran paylaşılırken sistem sesini de paylaş</label>
             <p class="muted small">Yankı koruması: YANKI'nın kendi çaldığı sesler (sohbetteki diğer kişiler, müzik botu) yayından çıkarılır; izleyenler kendi seslerini duymaz. Sistem bunu desteklemezse ekran otomatik olarak sessiz paylaşılır.</p>
@@ -1551,8 +1682,14 @@ async function openSettings (tab = 'profile') {
             <li>Özel mesajlar: yalnızca iki kişi arasında, üçüncü eşlere hiç gitmez</li>
             <li>Ses/Görüntü/Ekran: WebRTC (DTLS-SRTP), mesh topoloji</li>
           </ul>
-          <p class="muted small">Klavye: Ctrl/⌘+Shift+M sustur · Ctrl/⌘+Shift+D sağırlaştır · Ctrl/⌘+K hızlı geçiş · Esc iptal</p>
+          <div class="row gap center-x wrap">
+            <button class="btn small primary" id="ab-update">${icon('download', 15)} Güncellemeleri denetle</button>
+            <button class="btn small" id="ab-new">${icon('sparkle', 15)} Yenilikleri göster</button>
+          </div>
+          <p class="muted small">Klavye: Ctrl/⌘+Shift+M sustur · Ctrl/⌘+Shift+D sağırlaştır · Ctrl/⌘+K hızlı geçiş · Esc iptal · @ bahset</p>
         </div>`
+      $('#ab-update', pane).addEventListener('click', checkForUpdates)
+      $('#ab-new', pane).addEventListener('click', () => showWhatsNew())
     }
   }
   $$('nav button', body).forEach(b => b.addEventListener('click', () => show(b.dataset.tab)))
@@ -1599,7 +1736,7 @@ function pinsPopup (anchor) {
   const ch = curMeta()?.channels.find(c => c.id === S.channel)
   const pins = new Set(ch?.pins || [])
   const list = S.msgs.filter(x => pins.has(x.id))
-  openPopup(`<div class="pins"><h4>Sabitlenmiş mesajlar</h4>${list.length ? list.map(x => `<button class="pin-item" data-act="jump" data-id="${x.id}"><b>${esc(nameOf(x.author))}</b><span>${esc(x.text.slice(0, 160) || '📷 Resim')}</span></button>`).join('') : '<p class="muted small">Bu kanalda (yüklü mesajlar arasında) sabitlenmiş mesaj yok.</p>'}</div>`, anchor, { align: 'below', cls: 'pins-pop' })
+  openPopup(`<div class="pins"><h4>Sabitlenmiş mesajlar</h4>${list.length ? list.map(x => `<button class="pin-item" data-act="jump" data-id="${x.id}"><b>${esc(nameOf(x.author))}</b><span>${esc(plainText(x.text).slice(0, 160) || '📷 Resim')}</span></button>`).join('') : '<p class="muted small">Bu kanalda (yüklü mesajlar arasında) sabitlenmiş mesaj yok.</p>'}</div>`, anchor, { align: 'below', cls: 'pins-pop' })
 }
 
 function lightbox (src) {
@@ -1620,6 +1757,8 @@ function bindStatic () {
   $('#btn-attach').innerHTML = icon('paperclip', 19)
   $('#btn-emoji').innerHTML = icon('smile', 19)
   $('#btn-send').innerHTML = icon('send', 19)
+  $('#btn-poll').innerHTML = icon('poll', 19)
+  $('#btn-poll').addEventListener('click', openPollCreator)
 
   $$('[data-fmt]').forEach(b => b.addEventListener('click', () => wrapSelection(b.dataset.fmt)))
   $('#btn-attach').addEventListener('click', () => $('#file-input').click())
@@ -1675,7 +1814,7 @@ function bindStatic () {
   document.addEventListener('click', onClick)
   document.addEventListener('dblclick', (e) => {
     const t = e.target.closest('.tile')
-    if (t && !t.classList.contains('music')) { const v = $('video', t); (v || t).requestFullscreen?.() }
+    if (t && !t.classList.contains('music') && $('video', t) && !e.target.closest('button')) toggleFullscreen(t)
   })
   document.addEventListener('mousedown', (e) => {
     if (!e.target.closest('.popup') && !e.target.closest('[data-act]') && !e.target.closest('#btn-emoji')) closePopup()
@@ -1690,6 +1829,8 @@ function bindStatic () {
     if (e.key === 'Escape') closePopup()
   })
   window.addEventListener('focus', markRead)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { renderAll(); if (chatCtx()) reloadMessages('cur') } })
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) renderStage() })
 }
 
 function startEdit (id) {
@@ -1698,11 +1839,17 @@ function startEdit (id) {
   S.editing = id
   S.reply = null
   const t = $('#input')
-  t.value = msg.text
+  t.value = mentionsToNames(msg.text)
   autoGrow()
   t.focus()
   renderComposerState()
   renderMessages()
+}
+
+function toggleFullscreen (node) {
+  if (!node) return
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+  else node.requestFullscreen?.().catch(() => {})
 }
 
 async function onClick (e) {
@@ -1720,7 +1867,7 @@ async function onClick (e) {
     case 'home-friends': S.dm = null; renderAll(); break
     case 'home-tab': S.homeTab = a.dataset.tab; if (S.homeTab === 'blocked') S.blocked = await api.blockedList(); S.dm = null; renderAll(); break
     case 'home-add': S.mode = 'home'; S.dm = null; S.homeTab = 'add'; renderAll(); setTimeout(() => $('#af-code')?.focus(), 30); break
-    case 'open-dm': e.stopPropagation(); closePopup(); openDM(key); break
+    case 'open-dm': e.stopPropagation(); closePopup(); startDM(key); break
     case 'friend-more': e.stopPropagation(); friendMoreMenu(key, a); break
     case 'friend-add': case 'friend-accept': case 'friend-decline': case 'unblock': e.stopPropagation(); closePopup(); friendAction(act, key); break
     case 'friend-send': sendFriendCode(); break
@@ -1760,7 +1907,24 @@ async function onClick (e) {
     case 'music-stop': musicStop(); break
     case 'music-remove': musicSkip(id); break
     case 'hangup': voice.leave(); S.view = 'chat'; S.focusTile = null; renderAll(); break
-    case 'tile-full': { const t = a.closest('.tile'); ($('video', t) || t).requestFullscreen?.(); break }
+    case 'tile-full': toggleFullscreen(a.closest('.tile')); break
+    case 'watch':
+      e.stopPropagation()
+      if (voice.active && (S.mode !== 'server' || voice.server !== S.server)) await selectServer(voice.server)
+      voice.watch(key)
+      S.view = 'stage'
+      S.focusTile = 'screen:' + key
+      renderAll()
+      break
+    case 'unwatch':
+      e.stopPropagation()
+      if (document.fullscreenElement) await document.exitFullscreen().catch(() => {})
+      voice.unwatch(key)
+      if (S.focusTile === 'screen:' + key) S.focusTile = null
+      renderStage()
+      break
+    case 'peer-reconnect': e.stopPropagation(); voice.reconnect(key); toast('Bağlantı yeniden kuruluyor…', 2000); break
+    case 'update': openUpdateModal(); break
     case 'pins': pinsPopup(a); break
     case 'open-link': e.preventDefault(); api.openExternal(a.dataset.url); break
     case 'spoiler': a.classList.add('revealed'); break
@@ -1775,7 +1939,7 @@ async function onClick (e) {
     case 'cancel-reply': S.reply = null; renderComposerState(); break
     case 'cancel-edit': S.editing = null; $('#input').value = ''; autoGrow(); renderComposerState(); renderMessages(); break
     case 'edit': startEdit(id); break
-    case 'copy': { const msg = S.msgs.find(x => x.id === id); if (msg) copyText(msg.text); break }
+    case 'copy': { const msg = S.msgs.find(x => x.id === id); if (msg) copyText(plainText(msg.text)); break }
     case 'delete':
       if (e.shiftKey || await confirmModal('Mesajı sil', 'Bu mesaj herkes için silinecek. (İpucu: Shift+tık ile onaysız sil)', 'Sil')) await postCtx('message-delete', { target: id })
       if (S.mode === 'home') loadMessages()
@@ -1822,16 +1986,16 @@ function onContext (e) {
     if (!msg) return
     const items = [
       { label: 'Yanıtla', icon: 'reply', onClick: () => { S.reply = id; renderComposerState(); $('#input').focus() } },
-      { label: 'Metni kopyala', icon: 'copy', onClick: () => copyText(msg.text) }
+      { label: 'Metni kopyala', icon: 'copy', onClick: () => copyText(plainText(msg.text)) }
     ]
-    if (msg.author === S.me && !msg.poll) items.push({ label: 'Düzenle', icon: 'edit', onClick: () => startEdit(id) })
+    if (msg.author === S.me && !msg.poll && !msg.locked) items.push({ label: 'Düzenle', icon: 'edit', onClick: () => startEdit(id) })
     if (msg.author === S.me || curMeta()?.isAdmin) items.push('-', { label: 'Sil', icon: 'trash', danger: true, onClick: () => postCtx('message-delete', { target: id }).then(() => S.mode === 'home' && loadMessages()) })
     menu(items, pointAnchor(e), { align: 'below' })
   } else if (userEl && userEl.dataset.key && userEl.dataset.key !== S.me) {
     e.preventDefault()
     const key = userEl.dataset.key
     const st = friendStatusOf(key)
-    const items = [{ label: 'Mesaj gönder', icon: 'chat', onClick: () => openDM(key) }]
+    const items = [{ label: 'Mesaj gönder', icon: 'chat', onClick: () => startDM(key) }]
     if (st === 'none') items.push({ label: 'Arkadaş ekle', icon: 'userPlus', onClick: () => friendAction('friend-add', key) })
     if (st === 'incoming') items.push({ label: 'İsteği kabul et', icon: 'check', onClick: () => friendAction('friend-accept', key) })
     if (st === 'friends') items.push({ label: 'Arkadaşlıktan çıkar', icon: 'userX', danger: true, onClick: () => friendAction('friend-remove', key) })
