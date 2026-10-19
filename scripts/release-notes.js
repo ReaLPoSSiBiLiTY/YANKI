@@ -22,6 +22,15 @@ out.push('## Yenilikler')
 out.push('')
 for (const it of entry.items) out.push(`- **${it.title}** — ${it.desc}`)
 out.push('')
+// Aynı ana sürümün önceki ara sürümleri (ör. 1.2.1 sayfasında 1.2.0'ın yenilikleri de görünsün)
+const minor = version.split('.').slice(0, 2).join('.') + '.'
+for (const e of CHANGELOG) {
+  if (e === entry || !e.version.startsWith(minor) || e.version.localeCompare(version, undefined, { numeric: true }) > 0) continue
+  out.push(`### ${e.version} · ${e.title}`)
+  out.push('')
+  for (const it of e.items) out.push(`- **${it.title}** — ${it.desc}`)
+  out.push('')
+}
 out.push('## İndir')
 out.push('')
 out.push('| Sistem | Dosya |')

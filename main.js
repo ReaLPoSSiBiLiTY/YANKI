@@ -72,6 +72,14 @@ function createWindow () {
   })
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
 
+  // backgroundThrottling kapalı olduğu için sayfa küçültülünce kendiliğinden "gizli" sayılmaz;
+  // arayüz gereksiz çizim yapmasın diye durumu kendimiz bildiriyoruz
+  const vis = (hidden) => send({ type: 'window', hidden })
+  win.on('minimize', () => vis(true))
+  win.on('hide', () => vis(true))
+  win.on('restore', () => vis(false))
+  win.on('show', () => vis(false))
+
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url)
     return { action: 'deny' }
@@ -238,6 +246,33 @@ function decode (s) {
   return s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&#x27;/g, "'").replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n))
 }
 
+// Bir sohbet üyesi, herkesin uygulamasına yerel ağdaki (modem arayüzü, NAS, localhost'taki
+// servisler) adresleri açtıramasın: yalnızca internetteki genel adreslere izin verilir.
+const dns = require('dns').promises
+const net4 = require('net')
+function privateIp (ip) {
+  if (net4.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number)
+    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19)) || a >= 224
+  }
+  const v = ip.toLowerCase()
+  if (v.startsWith('::ffff:')) return privateIp(v.slice(7))
+  return v === '::' || v === '::1' || v.startsWith('fc') || v.startsWith('fd') || v.startsWith('fe8') || v.startsWith('fe9') || v.startsWith('fea') || v.startsWith('feb') || v.startsWith('ff')
+}
+async function publicUrl (u) {
+  let x
+  try { x = new URL(u) } catch { return false }
+  if (!/^https?:$/.test(x.protocol) || x.username || x.password) return false
+  if (x.port && !['80', '443', '8080', '8443'].includes(x.port)) return false
+  const host = x.hostname.replace(/^\[|\]$/g, '')
+  if (/^localhost$|\.local$|\.internal$|\.lan$|\.home$/i.test(host)) return false
+  try {
+    const addrs = net4.isIP(host) ? [{ address: host }] : await dns.lookup(host, { all: true })
+    return addrs.length > 0 && !addrs.some(a => privateIp(a.address))
+  } catch { return false }
+}
+
 async function linkPreview (url) {
   if (typeof url !== 'string' || !/^https?:\/\//i.test(url) || url.length > 2000) return null
   if (previewCache.has(url)) return previewCache.get(url)
@@ -245,7 +280,18 @@ async function linkPreview (url) {
   const timer = setTimeout(() => ctrl.abort(), 7000)
   let result = null
   try {
-    const res = await net.fetch(url, { signal: ctrl.signal, redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; YankiBot/1.1; +https://yanki.app)', 'Accept-Language': 'tr,en;q=0.8' } })
+    // Yönlendirmeleri elle izle; her adımda adres yeniden denetlenir
+    let res = null
+    let cur = url
+    for (let hop = 0; hop < 5; hop++) {
+      if (!(await publicUrl(cur))) throw new Error('blocked')
+      res = await net.fetch(cur, { signal: ctrl.signal, redirect: 'manual', credentials: 'omit', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; YankiBot/1.2)', 'Accept-Language': 'tr,en;q=0.8' } })
+      const loc = res.status >= 300 && res.status < 400 && res.headers.get('location')
+      if (!loc) break
+      cur = new URL(loc, cur).href
+      res = null
+    }
+    if (!res) throw new Error('too many redirects')
     const ct = res.headers.get('content-type') || ''
     if (/^image\//.test(ct)) {
       result = { kind: 'image', url }

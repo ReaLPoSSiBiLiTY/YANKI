@@ -55,12 +55,19 @@ class Updater extends EventEmitter {
 
   bundlePath () { return path.resolve(process.execPath, '..', '..', '..') }
 
+  // İndirme adresi yalnızca bu deponun sürüm dosyası olabilir
+  trustedAsset (a) {
+    return !!a && typeof a.browser_download_url === 'string' &&
+      a.browser_download_url.startsWith(`https://github.com/${this.repo}/releases/download/`) &&
+      /^[\w.-]+$/.test(a.name || '')
+  }
+
   pickAsset (assets) {
     const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
     const test = process.platform === 'win32'
       ? (this.mode() === 'auto' ? /-win-x64\.exe$/i : /-win-x64\.zip$/i)
       : new RegExp(`-mac-${arch}\\.zip$`, 'i')
-    return assets.find(a => test.test(a.name)) || null
+    return assets.find(a => test.test(a.name) && this.trustedAsset(a)) || null
   }
 
   async check () {
@@ -81,7 +88,7 @@ class Updater extends EventEmitter {
       version,
       current: this.current,
       notes: String(r.body || '').slice(0, 20000),
-      page: r.html_url,
+      page: `https://github.com/${this.repo}/releases/latest`,
       mode: asset ? this.mode() : 'manual',
       asset: asset ? { name: asset.name, url: asset.browser_download_url, size: asset.size, digest: asset.digest || null } : null
     }

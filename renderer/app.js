@@ -10,7 +10,7 @@
 
 // Ses arayüzü kare başına en fazla bir kez çizilir; pencere gizliyken (küçültülmüş, oyunun arkasında)
 // requestAnimationFrame beklediği için hiç çizilmez, görünür olunca bir kez çizilir.
-const drawVoice = throttleRaf(() => { renderVoiceInSidebar(); renderVoiceCard(); renderDock(); renderStage(); renderHeader(); renderMeCard() })
+const drawVoice = throttleRaf(() => { if (S.winHidden) return; renderVoiceInSidebar(); renderVoiceCard(); renderDock(); renderStage(); renderHeader(); renderMeCard() })
 
 // =====================================================================
 // Başlatma ve olaylar
@@ -76,7 +76,7 @@ const refreshMeta = debounce(async (serverId) => {
   renderRail()
 }, 80)
 
-const reloadMessages = debounce(() => { if (!document.hidden) loadMessages() }, 60)
+const reloadMessages = debounce(() => { if (!document.hidden && !S.winHidden) loadMessages() }, 60)
 const renderActivitySoon = (() => {
   let t
   return () => {
@@ -142,6 +142,10 @@ async function onEvent (ev) {
       if (S.mode === 'home' && S.dm === ev.peer) reloadMessages('cur')
       break
     }
+    case 'window':
+      S.winHidden = !!ev.hidden
+      if (!S.winHidden) { renderAll(); if (chatCtx()) reloadMessages('cur') }
+      break
     case 'update-available':
       onUpdateAvailable(ev.info)
       break

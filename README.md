@@ -48,6 +48,8 @@ Topluluğun yalnızca üyelerinin bilgisayarlarında yaşar; herkes birbirine do
 
 ## v1.2'de yenilikler
 
+> **1.2.1 (güvenlik güncellemesi):** Bağlantı önizlemeleri artık yerel ağ adreslerini açmıyor, güncellemeler yalnızca resmi sürüm sayfasından indiriliyor, gelen veriler daha sıkı denetleniyor ve pencere küçültülünce arayüz çizimi duruyor.
+
 - **Otomatik güncelleme:** Uygulama GitHub sürüm sayfasını takip eder. Yeni sürüm çıkınca sol altta yeşil **Güncelle** düğmesi belirir; tıklayınca indirilir, kurulur ve YANKI yeniden açılır.
   - Windows: kurulum dosyasıyla (.exe) kurulan sürümde tam otomatik. Kurulumsuz (.zip) sürümde indirme sayfası açılır.
   - macOS: YANKI **Uygulamalar** klasöründeyse tam otomatik.
@@ -81,15 +83,15 @@ npm run start:2   # aynı bilgisayarda ikinci bir kullanıcıyla denemek için
 ## Kurulum dosyası üretme
 
 ```bash
-npm run dist:win   # Windows'ta → dist/YANKI-1.2.0-win-x64.exe ve kurulumsuz .zip
-npm run dist:mac   # macOS'ta  → dist/YANKI-1.2.0-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
+npm run dist:win   # Windows'ta → dist/YANKI-1.2.1-win-x64.exe ve kurulumsuz .zip
+npm run dist:mac   # macOS'ta  → dist/YANKI-1.2.1-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
 ```
 
 İki platformu birden derlemek için `v1.2.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derler, sürüm notlarını `renderer/changelog.js`'ten üretir ve Releases sayfasında yayınlar. Uygulamalar güncellemeyi bu sayfadan alır.
 
 ### Yeni sürüm çıkarma
 
-1. `package.json` içindeki `version` değerini yükselt (ör. `1.3.0`).
+1. `package.json` içindeki `version` değerini yükselt. Yeni özellikler için ara sürüm (ör. `1.3.0`), güvenlik ve hata düzeltmeleri için alt sürüm (ör. `1.2.2`).
 2. `renderer/changelog.js` dosyasının en üstüne yeni sürümün maddelerini ekle. Hem uygulamadaki Yenilikler ekranı hem GitHub sürüm sayfası buradan üretilir.
 3. Değişiklikleri gönder ve `v1.3.0` etiketini oluşturup gönder.
 

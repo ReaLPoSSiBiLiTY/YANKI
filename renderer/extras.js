@@ -545,21 +545,30 @@ async function checkForUpdates () {
 // =====================================================================
 // "Yenilikler" ekranı
 // =====================================================================
-function showWhatsNew (version = S.version) {
+const verNum = (v) => (String(v || '').match(/(\d+)\.(\d+)\.(\d+)/) || [0, 0, 0, 0]).slice(1).map(Number)
+const verGt = (a, b) => { const x = verNum(a); const y = verNum(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false }
+
+// since: en son görülen sürüm. O sürümden sonra gelen (bu sürüm dahil) tüm notlar gösterilir.
+function showWhatsNew (since = null) {
   const list = window.CHANGELOG || []
-  const entry = list.find(e => e.version === version) || list[0]
-  if (!entry) return
-  const older = list.filter(e => e !== entry)
+  const cur = list.find(e => e.version === S.version) ? S.version : list[0]?.version
+  const fresh = list.filter(e => !verGt(e.version, cur) && (since ? verGt(e.version, since) : e.version === cur))
+  if (!fresh.length) return
+  const entry = fresh.find(e => e.items.length > 4) || fresh[0] // başlık: en kapsamlı sürüm
+  const older = list.filter(e => !fresh.includes(e) && !verGt(e.version, cur))
+  const sections = fresh.map(e => `
+      ${fresh.length > 1 ? `<h3 class="wn-sec">${esc(e.version)} · ${esc(e.title)}</h3>` : ''}
+      <div class="wn-grid">${e.items.map(it => `
+        <div class="wn-card"><span class="wn-icon">${icon(it.icon || 'sparkle', 20)}</span><div><b>${esc(it.title)}</b><p>${esc(it.desc)}</p></div></div>`).join('')}</div>`).join('')
   const body = el(`
     <div class="whatsnew">
       <div class="wn-hero">
         <div class="wn-rings"><i></i><i></i><i></i><img src="assets/mark.svg" alt=""></div>
         <img class="wn-word" src="assets/word.svg" alt="YANKI">
-        <div class="wn-badge">Sürüm ${esc(entry.version)}</div>
+        <div class="wn-badge">Sürüm ${esc(cur)}</div>
         <h2>${esc(entry.title)}</h2>
       </div>
-      <div class="wn-grid">${entry.items.map(it => `
-        <div class="wn-card"><span class="wn-icon">${icon(it.icon || 'sparkle', 20)}</span><div><b>${esc(it.title)}</b><p>${esc(it.desc)}</p></div></div>`).join('')}</div>
+      ${sections}
       ${older.length ? `<details class="wn-older"><summary>Önceki sürümler</summary>${older.map(e => `<h4>${esc(e.version)} · ${esc(e.title)}</h4><ul>${e.items.map(it => `<li><b>${esc(it.title)}</b> — ${esc(it.desc)}</li>`).join('')}</ul>`).join('')}</details>` : ''}
     </div>`)
   openModal({ body, wide: true, cls: 'whatsnew-modal', actions: [{ label: 'Hadi başlayalım', kind: 'primary' }] })
@@ -569,7 +578,8 @@ function maybeShowWhatsNew () {
   const seen = load('seenVersion', null)
   if (!S.version || seen === S.version) return
   save('seenVersion', S.version)
-  if (S.profile?.name) setTimeout(() => showWhatsNew(), 600) // yeni kurulumda değil, güncellemede göster
+  // Yeni kurulumda değil, güncellemede göster. Yenilikler ekranı 1.2'de geldi; kaydı yoksa 1.1'den geliyordur.
+  if (S.profile?.name) setTimeout(() => showWhatsNew(seen || '1.1.99'), 600)
 }
 
 Object.assign(window, { plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })

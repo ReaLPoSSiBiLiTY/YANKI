@@ -3,6 +3,17 @@
 // (scripts/release-notes.js) bu listeden üretilir. Yeni sürümde en üste ekle.
 const CHANGELOG = [
   {
+    version: '1.2.1',
+    date: '2026-10-19',
+    title: 'Güvenlik güncellemesi',
+    items: [
+      { icon: 'shield', title: 'Bağlantı önizlemesi güvenliği', desc: 'Sohbette paylaşılan bağlantıların önizlemesi artık yerel ağdaki adresleri (modem arayüzü, NAS, bilgisayarındaki servisler) açmıyor; yönlendirmeler de tek tek denetleniyor.' },
+      { icon: 'shield', title: 'Güncelleme doğrulaması', desc: 'Güncellemeler yalnızca YANKI\'nın resmi GitHub sürüm sayfasından indiriliyor.' },
+      { icon: 'shield', title: 'Ek sağlamlaştırma', desc: 'Grup üyeliği ve oyun algılamada kullanılan veriler daha sıkı denetleniyor.' },
+      { icon: 'activity', title: 'Küçültülmüşken daha az yük', desc: 'Pencere küçültüldüğünde ya da gizlendiğinde arayüz çizimi duruyor; ses ve yayın kesintisiz sürüyor.' }
+    ]
+  },
+  {
     version: '1.2.0',
     date: '2026-10-19',
     title: 'Gruplar, özel kanallar ve otomatik güncelleme',

@@ -163,7 +163,9 @@ class ActivityDetector {
     const k = 'exe:' + exe.toLowerCase()
     if (this.iconCache.has(k)) return this.iconCache.get(k)
     this.iconCache.set(k, null)
-    const ps = `(Get-Process -Name '${exe.replace(/\.exe$/i, '').replace(/'/g, '')}' -ErrorAction SilentlyContinue | Select-Object -First 1).Path`
+    const name = exe.replace(/\.exe$/i, '')
+    if (!/^[\w .+-]{1,80}$/.test(name)) return null
+    const ps = `(Get-Process -Name '${name}' -ErrorAction SilentlyContinue | Select-Object -First 1).Path`
     const p = (await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], 8000)).trim()
     const icon = p ? await this._icon(p) : null
     this.iconCache.set(k, icon)

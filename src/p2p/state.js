@@ -380,7 +380,7 @@ function applyServerOp (s, op) {
     }
     case 'group-member': {
       const gr = s.groups.get(d.target)
-      if (!isAdmin(a) || !gr || typeof d.user !== 'string') break
+      if (!isAdmin(a) || !gr || typeof d.user !== 'string' || !/^[0-9a-f]{64}$/.test(d.user)) break
       if (d.on) gr.members.add(d.user); else gr.members.delete(d.user)
       break
     }
