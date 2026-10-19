@@ -3,6 +3,15 @@
 // (scripts/release-notes.js) bu listeden üretilir. Yeni sürümde en üste ekle.
 const CHANGELOG = [
   {
+    version: '1.2.2',
+    date: '2026-10-19',
+    title: 'Lisans ve kullanım notu',
+    items: [
+      { icon: 'shield', title: 'Lisans', desc: 'YANKI artık MIT lisans metniyle birlikte dağıtılıyor: ücretsiz ve "olduğu gibi" sunulur.' },
+      { icon: 'sparkle', title: 'Kullanım notu', desc: 'Ayarlar › Hakkında\'ya, paylaşılan içerikten paylaşan kişinin sorumlu olduğunu açıklayan kısa bir kullanım notu eklendi.' }
+    ]
+  },
+  {
     version: '1.2.1',
     date: '2026-10-19',
     title: 'Güvenlik güncellemesi',

@@ -16,9 +16,12 @@ const dl = (file) => `https://github.com/${repo}/releases/download/${tag}/${file
 const out = []
 out.push(`<p align="center"><img src="${raw}/docs/banner.png" alt="YANKI" width="720"></p>`)
 out.push('')
-out.push(`<h2 align="center">${entry.title}</h2>`)
+// Başlık: aynı ana sürümün (ör. 1.2.x) en kapsamlı notu
+const mm = version.split('.').slice(0, 2).join('.') + '.'
+const headline = CHANGELOG.filter(e => e.version.startsWith(mm) && e.version.localeCompare(version, undefined, { numeric: true }) <= 0).sort((a, b) => b.items.length - a.items.length)[0] || entry
+out.push(`<h2 align="center">${headline.title}</h2>`)
 out.push('')
-out.push('## Yenilikler')
+out.push(entry === headline ? '## Yenilikler' : `## Yenilikler · ${entry.version} (${entry.title})`)
 out.push('')
 for (const it of entry.items) out.push(`- **${it.title}** — ${it.desc}`)
 out.push('')

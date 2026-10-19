@@ -1404,6 +1404,7 @@ function openProfileSetup () {
       <img class="hero-word" src="assets/word.svg" alt="YANKI">
       <p class="muted">Kimliğin bu bilgisayarda oluşturulan bir şifreleme anahtarıdır — hesap, e-posta veya şifre yok. Sadece nasıl görüneceğini seç.</p>
       <label>Görünen ad<input id="su-name" maxlength="32" placeholder="ör. ReaLPoSSiBiLiTY"></label>
+      <p class="muted small">Devam ederek paylaştığın içerikten kendinin sorumlu olduğunu kabul edersin. YANKI ücretsizdir ve "olduğu gibi" sunulur; ayrıntılar Ayarlar › Hakkında'da.</p>
     </div>`)
   openModal({
     body,
@@ -1686,6 +1687,11 @@ async function openSettings (tab = 'profile') {
             <li>Özel mesajlar: yalnızca iki kişi arasında, üçüncü eşlere hiç gitmez</li>
             <li>Ses/Görüntü/Ekran: WebRTC (DTLS-SRTP), mesh topoloji</li>
           </ul>
+          <div class="usage-note">
+            <b>Kullanım notu</b>
+            <p>YANKI ücretsizdir ve MIT lisansıyla, "olduğu gibi" sunulur; hiçbir garanti verilmez ve geliştiriciler kullanımdan doğan zararlardan sorumlu tutulamaz.</p>
+            <p>YANKI'nın merkezi bir sunucusu yoktur; mesajlar geliştiricinin değil, yalnızca kullanıcıların bilgisayarları arasında dolaşır. Paylaştığın her içerikten (mesaj, resim, bağlantı, yayın) sen sorumlusun. Yasa dışı, başkalarının haklarını ihlal eden ya da telifli içerik paylaşma. Sunucu sahipleri ve yöneticiler, kendi sunucularındaki uygunsuz içeriği kaldırmalı ve paylaşanları uzaklaştırmalıdır.</p>
+          </div>
           <div class="row gap center-x wrap">
             <button class="btn small primary" id="ab-update">${icon('download', 15)} Güncellemeleri denetle</button>
             <button class="btn small" id="ab-new">${icon('sparkle', 15)} Yenilikleri göster</button>

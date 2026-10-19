@@ -905,3 +905,7 @@ body.perf .avw.speaking::before { transform: scale(1.12); opacity: .8; }
 label.check .ic { color: var(--accent); }
 .um-progress .meter { flex: none; height: 8px; }
 body.light .mem-name[style], body.light .msg-name[style], body.light .vu-name[style], body.light .dm-name[style], body.light .md-title b[style], body.light .mh b[style] { filter: brightness(.78) saturate(1.3); }
+
+.usage-note { text-align: left; max-width: 620px; margin: 14px auto; padding: 12px 14px; border-radius: 14px; background: rgba(var(--fg-rgb), .04); border: 1px solid rgba(var(--fg-rgb), .08); font-size: 13px; color: var(--text-2); }
+.usage-note b { color: var(--text); }
+.usage-note p { margin: 6px 0 0; }

@@ -83,8 +83,8 @@ npm run start:2   # aynı bilgisayarda ikinci bir kullanıcıyla denemek için
 ## Kurulum dosyası üretme
 
 ```bash
-npm run dist:win   # Windows'ta → dist/YANKI-1.2.1-win-x64.exe ve kurulumsuz .zip
-npm run dist:mac   # macOS'ta  → dist/YANKI-1.2.1-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
+npm run dist:win   # Windows'ta → dist/YANKI-1.2.2-win-x64.exe ve kurulumsuz .zip
+npm run dist:mac   # macOS'ta  → dist/YANKI-1.2.2-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
 ```
 
 İki platformu birden derlemek için `v1.2.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derler, sürüm notlarını `renderer/changelog.js`'ten üretir ve Releases sayfasında yayınlar. Uygulamalar güncellemeyi bu sayfadan alır.
@@ -154,3 +154,9 @@ Veriler şu klasörlerde tutulur:
 - macOS: `~/Library/Application Support/YANKI`
 
 `p2p/identity.json` gizli anahtarındır; yedeklersen kimliğini başka bilgisayara taşıyabilirsin.
+
+## Lisans ve kullanım
+
+YANKI, [MIT lisansıyla](LICENSE) ücretsiz ve "olduğu gibi" sunulur; hiçbir garanti verilmez ve geliştiriciler kullanımdan doğan zararlardan sorumlu tutulamaz.
+
+YANKI'nın merkezi bir sunucusu yoktur; mesajlar geliştiricinin değil, yalnızca kullanıcıların bilgisayarları arasında dolaşır. Paylaşılan her içerikten (mesaj, resim, bağlantı, yayın) onu paylaşan kişi sorumludur. Yasa dışı, başkalarının haklarını ihlal eden ya da telifli içerik paylaşmayın. Sunucu sahipleri ve yöneticiler, kendi sunucularındaki uygunsuz içeriği kaldırmalı ve paylaşanları uzaklaştırmalıdır.
