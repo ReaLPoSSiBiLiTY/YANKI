@@ -341,8 +341,19 @@ function miniOnDM (peer) {
 const groupById = (m, id) => (m?.groups || []).find(g => g.id === id)
 const GROUP_COLORS = ['#ff4f8b', '#9b6bff', '#18c8ff', '#3ddc84', '#ffb020', '#ff5d5d', '#2dd4bf', '#f5c46b']
 
+// Üye listesinde adın yanında görünebilecek grup simgeleri ('' = simgesiz)
+const GROUP_ICONS = ['', 'shield', 'star', 'crown', 'zap', 'heart', 'flame', 'gem', 'leaf', 'gamepad', 'music', 'headphones', 'rocket', 'trophy', 'sword', 'skull']
+
 function groupChip (g, extra = '') {
-  return `<span class="gchip ${extra}" style="--gc:${g.color}"><i></i>${esc(g.name)}</span>`
+  return `<span class="gchip ${extra}" style="--gc:${g.color}">${g.icon ? icon(g.icon, 12) : '<i></i>'}${esc(g.name)}</span>`
+}
+
+// Bir üyenin grup simgeleri (adın yanında; en fazla 3)
+function groupBadges (key, m = curMeta(), size = 14) {
+  const mem = m?.members?.find(x => x.key === key)
+  if (!mem?.groups?.length) return ''
+  const list = (m.groups || []).filter(g => g.icon && mem.groups.includes(g.id)).slice(0, 3)
+  return list.map(g => `<span class="gbadge" style="--gc:${g.color}" title="${esc(g.name)}">${icon(g.icon, size)}</span>`).join('')
 }
 
 async function freshMeta () {
@@ -361,7 +372,7 @@ function openGroupsModal (selectId = null) {
     const m = curMeta()
     if (sel && !groupById(m, sel)) sel = m.groups[0]?.id || null
     $('.ga-list', body).innerHTML = `
-      ${m.groups.map(g => `<button class="ga-item ${g.id === sel ? 'on' : ''}" data-g="${g.id}"><i style="background:${g.color}"></i><span class="ellipsis">${esc(g.name)}</span><small>${g.members.length}</small></button>`).join('') || '<p class="muted small">Henüz grup yok.</p>'}
+      ${m.groups.map(g => `<button class="ga-item ${g.id === sel ? 'on' : ''}" data-g="${g.id}">${g.icon ? `<span class="gbadge" style="--gc:${g.color}">${icon(g.icon, 14)}</span>` : `<i style="background:${g.color}"></i>`}<span class="ellipsis">${esc(g.name)}</span><small>${g.members.length}</small></button>`).join('') || '<p class="muted small">Henüz grup yok.</p>'}
       <button class="btn small block" data-ga="new">${icon('plus', 15)} Yeni grup</button>
       <p class="muted small">Gruplar, belirli kanalları yalnızca seçili kişilere açmak içindir. Yöneticiler tüm kanalları görür.</p>`
     const g = groupById(m, sel)
@@ -374,6 +385,8 @@ function openGroupsModal (selectId = null) {
         <input id="ga-name" maxlength="40" value="${esc(g.name)}">
         <button class="btn small" data-ga="save">Kaydet</button>
       </div>
+      <h4>Simge <span class="muted small">— üye listesinde adın yanında görünür</span></h4>
+      <div class="ga-icons" style="--gc:${g.color}">${GROUP_ICONS.map(ic => `<button class="ga-icon ${(g.icon || '') === ic ? 'on' : ''}" data-icon="${ic}" title="${ic ? ic : 'Simgesiz'}">${ic ? icon(ic, 18) : '<span class="ga-noicon">Yok</span>'}</button>`).join('')}</div>
       <h4>Üyeler · ${g.members.length}</h4>
       <input id="ga-search" placeholder="Üye ara…">
       <div class="ga-members">${sorted.map(x => `
@@ -394,6 +407,8 @@ function openGroupsModal (selectId = null) {
   body.addEventListener('click', (e) => {
     const gi = e.target.closest('[data-g]')
     if (gi) { sel = gi.dataset.g; draw(); return }
+    const ib = e.target.closest('[data-icon]')
+    if (ib) { run(() => api.post(S.server, 'group-update', { target: sel, icon: ib.dataset.icon })); return }
     const b = e.target.closest('[data-ga]')
     if (!b) return
     const act = b.dataset.ga
@@ -582,4 +597,104 @@ function maybeShowWhatsNew () {
   if (S.profile?.name) setTimeout(() => showWhatsNew(seen || '1.1.99'), 600)
 }
 
-Object.assign(window, { plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })
+// =====================================================================
+// Davetler (uygulama yalnızca davetle kullanılır)
+// =====================================================================
+const INVITE_REASONS = {
+  invalid: 'Bu davet kodu geçersiz.',
+  revoked: 'Bu davet iptal edilmiş.',
+  expired: 'Bu davetin süresi dolmuş.',
+  used: 'Bu davetin kullanım hakkı bitmiş.'
+}
+const errText = (e) => String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+
+function fmtLeft (ms) {
+  if (ms <= 0) return 'süresi doldu'
+  const h = Math.floor(ms / 3600000)
+  if (h >= 48) return Math.floor(h / 24) + ' gün kaldı'
+  if (h >= 1) return h + ' saat kaldı'
+  return Math.max(1, Math.floor(ms / 60000)) + ' dakika kaldı'
+}
+
+async function openInviteModal () {
+  const m = curMeta()
+  if (!m?.isAdmin) return
+  const body = el(`
+    <div class="form invite-modal">
+      <p class="muted small">YANKI yalnızca davetle kullanılır. Davet kodunu yalnızca katılmasını istediğin kişiye gönder; kod belirlediğin süre ve kullanım sayısı dolunca çalışmaz, istediğin an iptal edebilirsin.</p>
+      <div class="row gap">
+        <label class="grow">Geçerlilik<select id="iv-h"><option value="1">1 saat</option><option value="24" selected>1 gün</option><option value="168">7 gün</option><option value="720">30 gün</option><option value="0">Süresiz</option></select></label>
+        <label class="grow">Kullanım<select id="iv-max"><option value="1" selected>1 kişi</option><option value="5">5 kişi</option><option value="10">10 kişi</option><option value="0">Sınırsız</option></select></label>
+      </div>
+      <label>Not (isteğe bağlı)<input id="iv-note" maxlength="60" placeholder="ör. Ahmet için"></label>
+      <button class="btn primary" id="iv-make">${icon('link', 16)} Davet oluştur</button>
+      <div id="iv-out"></div>
+      <h4>Davetler</h4>
+      <div class="iv-list"></div>
+    </div>`)
+  const draw = async () => {
+    const list = await api.invites(S.server).catch(() => [])
+    const now = Date.now()
+    $('.iv-list', body).innerHTML = list.length
+      ? list.map(i => `
+        <div class="iv-row ${i.active ? '' : 'off'}">
+          <div class="grow">
+            <b>${esc(i.note || 'Davet')}</b>
+            <div class="muted small">${esc(nameOf(i.by))} · ${i.uses}${i.max ? '/' + i.max : ''} kullanım · ${i.revoked ? 'iptal edildi' : i.exp ? fmtLeft(i.exp - now) : 'süresiz'}${i.members.length ? ' · Katılan: ' + i.members.map(k => esc(nameOf(k))).join(', ') : ''}</div>
+          </div>
+          ${i.active ? `<button class="btn small danger-ghost" data-revoke="${i.id}">İptal et</button>` : '<span class="muted small">Geçersiz</span>'}
+        </div>`).join('')
+      : '<p class="muted small">Henüz davet yok.</p>'
+  }
+  body.addEventListener('click', async (e) => {
+    if (e.target.closest('#iv-make')) {
+      try {
+        const code = await api.createInvite(S.server, { hours: +$('#iv-h', body).value, max: +$('#iv-max', body).value, note: $('#iv-note', body).value.trim() })
+        $('#iv-out', body).innerHTML = `<div class="invite-box"><code>${esc(code)}</code><button class="btn small primary" data-copy>${icon('copy', 15)} Kopyala</button></div>`
+        $('[data-copy]', body).addEventListener('click', () => copyText(code, 'Davet kodu kopyalandı — yalnızca davet ettiğin kişiye gönder.'))
+        $('#iv-note', body).value = ''
+        draw()
+      } catch (err) { toast(errText(err)) }
+    }
+    const r = e.target.closest('[data-revoke]')
+    if (r) { try { await api.revokeInvite(S.server, r.dataset.revoke); toast('Davet iptal edildi.'); draw() } catch (err) { toast(errText(err)) } }
+  })
+  openModal({ title: 'Davet et', body, wide: true })
+  draw()
+}
+
+// Hiç sunucu yokken uygulama kilitlidir: yalnızca davet koduyla açılır
+function renderLock () {
+  const box = $('#lock')
+  const locked = !S.servers.length && !!S.profile?.name
+  document.body.classList.toggle('locked', locked)
+  box.hidden = !locked
+  if (!locked) { box.innerHTML = ''; delete box.dataset.ready; return }
+  if (box.dataset.ready) return
+  box.dataset.ready = '1'
+  box.innerHTML = `
+    <div class="lock-card">
+      <div class="wn-rings"><i></i><i></i><i></i><img src="assets/mark.svg" alt=""></div>
+      <img class="lock-word" src="assets/word.svg" alt="YANKI">
+      <h2>YANKI yalnızca davetle kullanılır</h2>
+      <p class="muted">Seni davet eden kişiden aldığın davet kodunu yapıştır. Kod bir sunucu yöneticisi tarafından oluşturulur.</p>
+      <div class="af-input"><input id="lock-code" placeholder="yanki://davet/…" autocomplete="off"><button class="btn primary" id="lock-join">Katıl</button></div>
+      <div class="lock-err muted small"></div>
+      ${S.canCreate ? `<button class="btn small" data-act="create-server">${icon('plus', 15)} Yeni sunucu oluştur</button>` : ''}
+    </div>`
+  const go = async () => {
+    const code = $('#lock-code', box).value.trim()
+    if (!code) return
+    try {
+      const id = await api.joinServer(code)
+      delete box.dataset.ready
+      S.servers = (await api.init()).servers
+      await window.selectServer(id)
+    } catch (err) { $('.lock-err', box).textContent = errText(err) }
+  }
+  $('#lock-join', box).addEventListener('click', go)
+  $('#lock-code', box).addEventListener('keydown', (e) => { if (e.key === 'Enter') go() })
+  setTimeout(() => $('#lock-code', box)?.focus(), 50)
+}
+
+Object.assign(window, { GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })

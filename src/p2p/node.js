@@ -13,7 +13,7 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const { EventEmitter } = require('events')
-const { derive, deriveDM, applyServerOp, applyDMOp, musicState, allowedIn, isPrivate, after, OP_TYPES, DM_TYPES, BOTS, sanitizeProfile } = require('./state')
+const { derive, deriveDM, applyServerOp, applyDMOp, musicState, allowedIn, isPrivate, after, inviteStatus, inviteHash, OP_TYPES, DM_TYPES, BOTS, sanitizeProfile } = require('./state')
 const identity = require('./identity')
 
 const HEX64 = /^[0-9a-f]{64}$/
@@ -153,6 +153,7 @@ class P2PNode extends EventEmitter {
     this.wants = new Map() // anahtar -> Set(sebep)  (doğrudan bağlantı istekleri)
     this.sigQueue = new Map()
     this.blocked = new Set()
+    this.joinErrors = new Map() // bekleyen katılım -> davet hatası
     this.activity = null
     this.acts = new Map() // başkalarının son bilinen etkinliği
     this._lastTs = 0
@@ -288,7 +289,15 @@ class P2PNode extends EventEmitter {
     })
   }
 
+  // Yeni sunucuyu yalnızca mevcut bir sunucuda yönetici olanlar açabilir (uygulama davetle kullanılır)
+  canCreateServer () {
+    if (this.opts.allowCreate || (Array.isArray(this.opts.founders) && this.opts.founders.includes(this.me))) return true
+    for (const st of this.servers.values()) if (st.state?.admins.has(this.me)) return true
+    return false
+  }
+
   createServer (name, icon) {
+    if (!this.canCreateServer()) throw new Error('Yeni sunucuyu yalnızca bir sunucuda yönetici olanlar açabilir.')
     const genesis = this._createOp('', 'genesis', { name: String(name || 'Sunucum').slice(0, 60), icon: icon || null })
     const id = genesis.id
     const store = this._serverStore(id)
@@ -313,12 +322,23 @@ class P2PNode extends EventEmitter {
     return id
   }
 
-  joinServer (serverId) {
-    if (!HEX64.test(serverId)) throw new Error('Geçersiz davet kodu')
+  // Davet kodu: yanki://davet/<sunucu>.<gizli>
+  static parseInvite (code) {
+    const s = String(code || '').trim().toLowerCase().replace(/^yanki:\/*(davet\/)?/, '')
+    const m = s.match(/^([0-9a-f]{64})\.([0-9a-f]{32})$/)
+    if (m) return { server: m[1], secret: m[2] }
+    if (HEX64.test(s)) throw new Error('Bu eski tip (kalıcı) bir davet kodu ve artık geçerli değil. Sunucu yöneticisinden yeni bir davet iste.')
+    throw new Error('Geçersiz davet kodu')
+  }
+
+  joinServer (code) {
+    const { server: serverId, secret } = P2PNode.parseInvite(code)
     if (!this.servers.has(serverId)) {
       const store = this._serverStore(serverId)
       this.servers.set(serverId, store)
-      store.add(this._createOp(serverId, 'member-join', {}))
+      this.joinErrors.delete(serverId)
+      store.add(this._createOp(serverId, 'member-join', { invite: secret }))
+      setTimeout(() => this._offerInvites(serverId), 50)
       if (this.profile.name) store.add(this._createOp(serverId, 'profile', this.profile))
       store.add(this._createOp(serverId, 'member-key', { x: this.xpub }))
       this._joinTopic(serverId)
@@ -328,13 +348,38 @@ class P2PNode extends EventEmitter {
     return serverId
   }
 
+  createInvite (serverId, { hours = 24, max = 0, note = '' } = {}) {
+    const st = this.servers.get(serverId)?.state
+    if (!st || !st.admins.has(this.me)) throw new Error('Davet oluşturmak için yönetici olmalısın.')
+    const secret = crypto.randomBytes(16).toString('hex')
+    const exp = Number(hours) > 0 ? Date.now() + Math.min(Number(hours), 24 * 365) * 3600000 : 0
+    this.post(serverId, 'invite-create', { h: inviteHash(secret), exp, max: Math.max(0, Math.min(1000, Math.floor(Number(max) || 0))), note: String(note || '').slice(0, 60) })
+    return 'yanki://davet/' + serverId + '.' + secret
+  }
+
+  invites (serverId) {
+    const st = this.servers.get(serverId)?.state
+    if (!st || !st.admins.has(this.me)) return []
+    const now = Date.now()
+    const joined = new Map()
+    for (const [k, m] of st.members) if (m.invite) { if (!joined.has(m.invite)) joined.set(m.invite, []); joined.get(m.invite).push(k) }
+    return [...st.invites.values()].sort((a, b) => b.ts - a.ts).map(i => ({
+      id: i.id, by: i.by, ts: i.ts, exp: i.exp, max: i.max, uses: i.uses, note: i.note, revoked: i.revoked,
+      active: !i.revoked && (!i.exp || now <= i.exp) && (!i.max || i.uses < i.max),
+      members: joined.get(i.id) || []
+    }))
+  }
+
+  revokeInvite (serverId, id) { return this.post(serverId, 'invite-revoke', { target: id }) }
+
   leaveServer (serverId) {
     const store = this.servers.get(serverId)
     if (!store) return
     try { this.post(serverId, 'member-leave', {}) } catch {}
     try { this.swarm.leave(topicFor(serverId)) } catch {}
     this.servers.delete(serverId)
-    setTimeout(() => { try { fs.rmSync(store.dir, { recursive: true, force: true }) } catch {} }, 1500)
+    this.joinErrors.delete(serverId)
+    try { fs.rmSync(store.dir, { recursive: true, force: true }) } catch {}
     this._rehelloAll()
     this.emit('servers', this.listServers())
   }
@@ -450,7 +495,7 @@ class P2PNode extends EventEmitter {
     const store = this.servers.get(serverId)
     if (!store) return null
     const s = store.state
-    if (!s) return { id: serverId, pending: true, me: this.me, peers: this._peerCount(serverId) }
+    if (!s) return { id: serverId, pending: true, me: this.me, peers: this._peerCount(serverId), joinError: this.joinErrors.get(serverId) || null }
     const online = this.onlineSet(serverId)
     const now = Date.now()
     const amAdmin = s.admins.has(this.me)
@@ -479,9 +524,10 @@ class P2PNode extends EventEmitter {
       admin: s.admins.has(key),
       online: online.has(key),
       groups: [...s.groups.values()].filter(g => g.members.has(key)).map(g => g.id),
+      invitedBy: m.invitedBy || null,
       canEncrypt: s.xkeys.has(key)
     }))
-    const groups = [...s.groups.values()].sort((a, b) => a.order - b.order).map(g => ({ id: g.id, name: g.name, color: g.color, members: [...g.members] }))
+    const groups = [...s.groups.values()].sort((a, b) => a.order - b.order).map(g => ({ id: g.id, name: g.name, color: g.color, icon: g.icon || '', members: [...g.members] }))
     const bots = Object.keys(BOTS).map(id => {
       const b = s.bots.get(id)
       return { id, kind: BOTS[id].kind, enabled: !!(b && b.enabled), channels: b ? [...b.channels] : [] }
@@ -591,6 +637,7 @@ class P2PNode extends EventEmitter {
     const status = this.friendStatus(key)
     if (status === 'friends' || status === 'outgoing') return status
     if (status === 'incoming') return this.friendAccept(key)
+    if (!this.dms.has(key) && !this.sharesServer(key)) throw new Error('Yalnızca ortak bir sunucuda bulunduğun kişileri arkadaş ekleyebilirsin.')
     this._dmPost(key, 'friend-request', {})
     this._ensureMyProfileIn(key)
     this._syncFriendWants()
@@ -711,6 +758,8 @@ class P2PNode extends EventEmitter {
     const dmId = dmIdFor(this.me, key)
     const existing = this.dms.get(key)
     if (existing && existing.has(raw.id)) return null
+    // Ortak sunucusu olmayan biri ilk kez yazamaz (uygulama davetle kullanılır)
+    if (!existing && !this.sharesServer(key)) return null
     const op = this._validate(raw, dmId, DM_TYPES)
     if (!op || (op.author !== key && op.author !== this.me)) return null
     if (op.author === key) {
@@ -806,6 +855,7 @@ class P2PNode extends EventEmitter {
         key,
         conns: [],
         shared: new Set(),
+        invited: new Set(), // geçerli davet sunduğu sunucular
         dmReplied: false,
         get conn () { return this.conns[this.conns.length - 1] },
         send: (m) => {
@@ -887,7 +937,15 @@ class P2PNode extends EventEmitter {
     for (const { id, tag } of this._tags(peer)) {
       if (!theirs.has(tag)) continue
       const st = this.servers.get(id).state
-      if (st && st.banned.has(peer.key)) continue
+      if (st) {
+        if (st.banned.has(peer.key)) continue
+        // Sunucu verisi yalnızca üyelerle ve geçerli bir davet sunanlarla paylaşılır
+        if (!st.members.has(peer.key) && !peer.invited.has(id)) continue
+      } else {
+        // Henüz katılmadık: davetimizi karşı tarafa sun
+        const mine = [...this.servers.get(id).ops.values()].filter(o => o.type === 'member-join' && o.author === this.me && o.data?.invite).sort((a, b) => b.ts - a.ts)[0]
+        if (mine) peer.send({ t: 'join', tag, c: mine.data.invite })
+      }
       next.add(id)
     }
     peer.shared = next
@@ -905,6 +963,31 @@ class P2PNode extends EventEmitter {
     if (!m || typeof m !== 'object') return
     switch (m.t) {
       case 'hello': return this._onHello(peer, m)
+      case 'join': {
+        if (typeof m.tag !== 'string' || typeof m.c !== 'string') return
+        const hit = this._tags(peer).find(x => x.tag === m.tag)
+        const st = hit && this.servers.get(hit.id).state
+        if (!st || st.banned.has(peer.key)) return
+        if (st.members.has(peer.key)) return
+        const status = inviteStatus(st, m.c)
+        if (status !== 'ok') { peer.send({ t: 'joinerr', tag: m.tag, r: status }); return }
+        peer.invited.add(hit.id)
+        this._sendHello(peer, false)
+        if (!peer.shared.has(hit.id)) {
+          peer.shared.add(hit.id)
+          peer.send({ t: 'have', s: hit.id, ids: this.servers.get(hit.id).ids() })
+          this.emit('peers', [hit.id])
+        }
+        return
+      }
+      case 'joinerr': {
+        const hit = typeof m.tag === 'string' && this._tags(peer).find(x => x.tag === m.tag)
+        if (!hit || this.servers.get(hit.id).state) return
+        const r = ['invalid', 'revoked', 'expired', 'used'].includes(m.r) ? m.r : 'invalid'
+        this.joinErrors.set(hit.id, r)
+        this.emit('servers', this.listServers())
+        return
+      }
       case 'have': {
         if (!peer.shared.has(m.s) || !Array.isArray(m.ids)) return
         const theirs = new Set(m.ids)
@@ -922,6 +1005,7 @@ class P2PNode extends EventEmitter {
           this._emitOps(m.s, fresh)
           if (fresh.some(o => o.type === 'genesis' || o.type === 'server-update')) this.emit('servers', this.listServers())
           if (fresh.some(o => o.type === 'ban')) this._dropBanned(m.s)
+          if (fresh.some(o => o.type === 'member-join' || o.type === 'genesis')) { this.joinErrors.delete(m.s); this._rehelloAll() }
           if (fresh.some(o => KEY_TYPES.has(o.type) || o.type === 'genesis')) { this._publishKey(m.s); this._scheduleKeys(m.s) }
         }
         return
@@ -1055,7 +1139,21 @@ class P2PNode extends EventEmitter {
     }
   }
 
+  // Bekleyen katılımlar için davetimizi bağlı eşlere sun (sunucuyu tanımayanlar yok sayar)
+  _offerInvites (only = null) {
+    for (const [id, store] of this.servers) {
+      if (store.state || (only && only !== id)) continue
+      const mine = [...store.ops.values()].filter(o => o.type === 'member-join' && o.author === this.me && o.data?.invite).sort((a, b) => b.ts - a.ts)[0]
+      if (!mine) continue
+      for (const p of this.peers.values()) {
+        const tag = this._tags(p).find(x => x.id === id)?.tag
+        if (tag) p.send({ t: 'join', tag, c: mine.data.invite })
+      }
+    }
+  }
+
   _tick () {
+    this._offerInvites()
     for (const id of this.servers.keys()) this.sendEph(id, 'presence', { act: this.activity })
     for (const p of this.peers.values()) if (this.dms.has(p.key)) p.send({ t: 'act', d: this.activity })
     const now = Date.now()

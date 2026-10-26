@@ -76,22 +76,27 @@ async function until (fn, msg, timeout = 3000) {
 async function main () {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'yanki-test-'))
   const net = new FakeNet()
-  const mk = async (name) => {
-    const n = new P2PNode(path.join(root, name), { swarmFactory: net.factory() })
+  const mk = async (name, opts = {}) => {
+    const n = new P2PNode(path.join(root, name), { swarmFactory: net.factory(), ...opts })
     await n.start()
     n.setProfile({ name, bio: name + ' biyografisi', color: '#33aa66' })
     return n
   }
-  const A = await mk('ayse')
+  const A = await mk('ayse', { allowCreate: true })
   const B = await mk('burak')
   const C = await mk('can')
 
   // A ile C doğrudan bağlanamıyor (NAT simülasyonu): veriler B üzerinden yayılmalı
   net.blocked.add([A.me, C.me].sort().join())
 
+  // Davetsiz sunucu açılamaz; eski kalıcı kod geçersiz
+  assert.throws(() => B.createServer('X', null), /yönetici/)
   const sid = A.createServer('VAULT', null)
-  B.joinServer(sid)
-  C.joinServer(sid)
+  assert.throws(() => B.joinServer('yanki://' + sid), /eski tip/)
+  const inv = A.createInvite(sid, { hours: 24, max: 2 })
+  assert.ok(/^yanki:\/\/davet\/[0-9a-f]{64}\.[0-9a-f]{32}$/.test(inv))
+  B.joinServer(inv)
+  C.joinServer(inv)
 
   await until(() => B.meta(sid) && !B.meta(sid).pending && C.meta(sid) && !C.meta(sid).pending, 'genesis eşitleme')
   const meta = C.meta(sid)
@@ -103,6 +108,25 @@ async function main () {
   const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
   C.post(sid, 'message', { channel: genel, text: '', attachments: [{ type: 'image', data: pixel, name: 'p.png', w: 1, h: 1 }] })
   await until(() => A.messages(sid, genel).length === 2 && C.messages(sid, genel).length === 2, 'mesajlar her yöne (aktarım dahil)')
+
+  // Davet hakkı doldu: üçüncü kişi giremez; uydurma davet ve iptal edilmiş davet de reddedilir
+  const E = await mk('emre')
+  E.joinServer(inv)
+  await until(() => E.meta(sid).joinError === 'used', 'kullanılmış davet reddedildi')
+  E.leaveServer(sid)
+  await wait(50)
+  E.joinServer('yanki://davet/' + sid + '.' + '0'.repeat(32))
+  await until(() => E.meta(sid).joinError === 'invalid', 'uydurma davet reddedildi')
+  E.leaveServer(sid)
+  const inv2 = A.createInvite(sid, { hours: 1, max: 1 })
+  A.revokeInvite(sid, A.invites(sid)[0].id)
+  await wait(50)
+  E.joinServer(inv2)
+  await until(() => E.meta(sid).joinError === 'revoked', 'iptal edilmiş davet reddedildi')
+  assert.ok(E.meta(sid).pending, 'davetsiz kişi sunucu verisini alamamalı')
+  assert.strictEqual(A.invites(sid).find(i => i.uses === 2).members.length, 2)
+  E.leaveServer(sid)
+  await E.destroy()
 
   // Üyeler ve profiller
   await until(() => A.meta(sid).members.length === 3 && A.meta(sid).members.every(m => m.profile), 'üye profilleri')
@@ -252,9 +276,14 @@ async function main () {
   }
 
   // ---------- v1.1: arkadaşlık ve özel mesaj ----------
-  // D hiçbir ortak sunucusu olmayan yeni bir kullanıcı; A'yı açık anahtarıyla ekler
+  // D hiçbir ortak sunucusu olmayan yeni bir kullanıcı: yabancılar arkadaş ekleyemez
   const D = await mk('deniz')
   assert.throws(() => D.dmPost(A.me, 'dm', { text: 'selam' }), /arkadaş/)
+  assert.throws(() => D.friendRequest(A.me), /ortak/)
+  // A'nın ikinci sunucusuna davetle katılır, sonra arkadaş olur ve sunucudan ayrılır
+  const sid2 = A.createServer('ARKA', null)
+  D.joinServer(A.createInvite(sid2, { max: 1 }))
+  await until(() => D.meta(sid2) && !D.meta(sid2).pending && A.sharesServer(D.me), 'D ikinci sunucuya katıldı')
   D.friendRequest(A.me)
   await until(() => A.friendStatus(D.me) === 'incoming', 'arkadaşlık isteği ulaştı')
   assert.strictEqual(D.friendStatus(A.me), 'outgoing')
@@ -263,6 +292,8 @@ async function main () {
   await until(() => D.friendStatus(A.me) === 'friends', 'arkadaşlık kabul edildi')
   D.dmPost(A.me, 'dm', { text: 'Selam! Bu özel bir mesaj' })
   A.dmPost(D.me, 'dm', { text: 'Aleyküm selam' })
+  D.leaveServer(sid2)
+  await until(() => !A.sharesServer(D.me), 'D ayrıldı')
   await until(() => A.dmMessages(D.me).length === 2 && D.dmMessages(A.me).length === 2, 'özel mesajlar')
   // Özel mesajlar üçüncü kişilere gitmez
   assert.ok(!B.dms.has(D.me) && !B.dms.has(A.me))
@@ -285,7 +316,7 @@ async function main () {
 
   // Yeniden başlatma: disk kalıcılığı
   await A.destroy()
-  const A2 = new P2PNode(path.join(root, 'ayse'), { swarmFactory: net.factory() })
+  const A2 = new P2PNode(path.join(root, 'ayse'), { swarmFactory: net.factory(), allowCreate: true })
   await A2.start()
   assert.strictEqual(A2.me, A.me)
   assert.strictEqual(A2.messages(sid, genel).length, 6)

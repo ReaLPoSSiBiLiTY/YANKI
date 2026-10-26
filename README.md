@@ -46,6 +46,15 @@ Topluluğun yalnızca üyelerinin bilgisayarlarında yaşar; herkes birbirine do
   </tr>
 </table>
 
+## v1.3'te yenilikler
+
+- **Yalnızca davetle kullanım:** YANKI'yı indiren biri, bir sunucu yöneticisinden davet kodu almadan uygulamayı kullanamaz. Davetler süreli ve sınırlı kullanımlıdır, iptal edilebilir (Sunucu menüsü › Davet et). Eski kalıcı kodlar çalışmaz; yeni sunucuyu yalnızca mevcut yöneticiler açabilir.
+- **Grup simgeleri:** Her gruba seçilebilir bir simge; üye listesinde adın yanında görünür.
+- **Çift tıkla mesaj at:** Üye listesinde birine çift tıklayınca mini özel mesaj penceresi açılır.
+- **Arka planda çalışma:** Pencere kapatılınca YANKI görev çubuğundaki simgeye iner; tamamen kapatmak için simgeye sağ tıklayıp "Çıkış".
+
+> **Kimliğini yedekle:** Yeni sunucuyu yalnızca yöneticiler açabildiği için kimlik dosyanı (`p2p/identity.json`) kaybetmemen önemlidir. Kaybolursa başka bir yöneticiden davet alarak geri dönebilirsin. Kurucu anahtarlarını `package.json` içindeki `yanki.founders` listesine eklersen o kimlikler davetsiz de sunucu açabilir.
+
 ## v1.2'de yenilikler
 
 > **1.2.1 (güvenlik güncellemesi):** Bağlantı önizlemeleri artık yerel ağ adreslerini açmıyor, güncellemeler yalnızca resmi sürüm sayfasından indiriliyor, gelen veriler daha sıkı denetleniyor ve pencere küçültülünce arayüz çizimi duruyor.
@@ -83,8 +92,8 @@ npm run start:2   # aynı bilgisayarda ikinci bir kullanıcıyla denemek için
 ## Kurulum dosyası üretme
 
 ```bash
-npm run dist:win   # Windows'ta → dist/YANKI-1.2.2-win-x64.exe ve kurulumsuz .zip
-npm run dist:mac   # macOS'ta  → dist/YANKI-1.2.2-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
+npm run dist:win   # Windows'ta → dist/YANKI-1.3.0-win-x64.exe ve kurulumsuz .zip
+npm run dist:mac   # macOS'ta  → dist/YANKI-1.3.0-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
 ```
 
 İki platformu birden derlemek için `v1.2.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derler, sürüm notlarını `renderer/changelog.js`'ten üretir ve Releases sayfasında yayınlar. Uygulamalar güncellemeyi bu sayfadan alır.
@@ -115,6 +124,7 @@ npm run dist:mac   # macOS'ta  → dist/YANKI-1.2.2-mac-arm64.dmg / mac-x64.dmg 
 
 ### Bilinen sınırlar
 
+- Uygulamanın indirilmesi engellenemez (sürüm sayfası herkese açıktır); ancak davetsiz indirilen uygulama hiçbir sunucuya giremez ve kimseye mesaj atamaz. Kaynak kodunu değiştirip kendi sürümünü derleyen biri yalnızca kendi kurduğu, sizinkinden bağımsız bir sunucu açabilir.
 - Bir sunucunun ya da özel sohbetin yeni verisi, karşı tarafın uygulaması açıkken eşitlenir.
 - Mesh topolojide her izleyiciye ayrı akış gider. 1080p60 izleyici başına yaklaşık 9 Mbps yükleme ister.
 - Gizli anketlerde oylar arayüzde gösterilmez, ancak oylar imzalı kayıtlar olduğu için uygulamayı değiştiren biri kimin oy verdiğini görebilir.

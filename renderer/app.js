@@ -6,6 +6,7 @@
    BOT_DEFS, botAvatar, botsIn, botEnabledIn, welcomeText, renderBotReply, renderPoll, renderCmdHints, handleMusicCommand, musicAdd, musicSkip, musicStop, MusicPlayer, openMusicPanel, openBotsModal, openBotCard,
    friendOf, friendStatusOf, isOnline, dmUnread, incomingCount, homeBadge, refreshDMs, renderHomeSidebar, renderHome, homeTabsHTML, activeNowHTML, dmProfileHTML, activityBlock, friendButton, renderDMComposer, friendAction, sendFriendCode, friendMoreMenu,
    throttleRaf, isLight, plainText, mentionsToNames, namesToMentions, mentionMap, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator,
+   GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, openMiniDM,
    startDM, closeMiniDM, bindMiniDM, miniOnDM, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew */
 
 // Ses arayüzü kare başına en fazla bir kez çizilir; pencere gizliyken (küçültülmüş, oyunun arkasında)
@@ -24,7 +25,9 @@ async function init () {
   S.servers = r.servers
   S.platform = r.platform
   S.version = r.version || ''
+  S.canCreate = await api.canCreateServer?.().catch(() => false)
   document.body.classList.add('os-' + r.platform)
+  api.setCloseToTray?.(settings.closeToTray !== false)
 
   voice = new Voice({
     api,
@@ -92,6 +95,8 @@ async function onEvent (ev) {
   switch (ev.type) {
     case 'servers':
       S.servers = ev.servers
+      api.canCreateServer?.().then(v => { S.canCreate = v }).catch(() => {})
+      renderLock()
       renderRail()
       if (S.server && !S.servers.some(s => s.id === S.server)) {
         S.server = null
@@ -330,6 +335,7 @@ const isUnread = (serverId, ch) => ch.kind === 'text' && ch.lastTs && ch.lastAut
 // Render: tümü
 // =====================================================================
 function renderAll () {
+  renderLock()
   renderRail()
   renderSidebar()
   renderHeader()
@@ -374,10 +380,10 @@ function renderLayout () {
     e.innerHTML = `
       <div class="empty-card">
         <div class="echo-loader"><i></i><i></i><i></i></div>
-        <h1>Eşler aranıyor…</h1>
-        <p>Bu sunucunun verileri, çevrim içi bir üyesi bulunduğu anda doğrudan ondan eşitlenecek. Davet eden kişinin uygulamasının açık olduğundan emin ol.</p>
+        ${m.joinError ? `<h1>Katılamadın</h1><p>${INVITE_REASONS[m.joinError] || INVITE_REASONS.invalid} Seni davet eden kişiden yeni bir davet kodu iste.</p>` : `<h1>Eşler aranıyor…</h1>
+        <p>Davetin, sunucunun çevrim içi bir üyesi tarafından doğrulanınca veriler doğrudan ondan eşitlenecek. Davet eden kişinin uygulamasının açık olduğundan emin ol.</p>`}
         <p class="muted small">Bağlı eş: ${m.peers || 0}</p>
-        <button class="btn danger" data-act="leave-server">Vazgeç ve ayrıl</button>
+        <button class="btn danger" data-act="leave-server">${m.joinError ? 'Kapat' : 'Vazgeç ve ayrıl'}</button>
       </div>`
   } else if (empty === 'nochannel') {
     e.innerHTML = `<div class="empty-card"><h1>Metin kanalı yok</h1><p>${m.isAdmin ? 'Kenar çubuğundan yeni bir kanal oluşturabilirsin.' : 'Bir yöneticinin kanal oluşturmasını bekle.'}</p></div>`
@@ -929,7 +935,7 @@ function renderMembers () {
       <button class="mem ${x.online ? '' : 'offline'}" data-act="user" data-key="${x.key}">
         ${avatarFull(x.key, 36, { online: x.online, badge: x.online })}
         <span class="mem-text">
-          <span class="mem-name" style="${p?.color && x.online ? `color:${p.color}` : ''}">${esc(nameOf(x.key))}${x.owner ? icon('crown', 13, 'gold') : x.admin ? icon('shield', 13, 'blue') : ''}</span>
+          <span class="mem-name" style="${p?.color && x.online ? `color:${p.color}` : ''}"><span class="ellipsis">${esc(nameOf(x.key))}</span>${x.owner ? icon('crown', 13, 'gold') : x.admin ? icon('shield', 13, 'blue') : ''}${groupBadges(x.key, m)}</span>
           ${(x.online && actLine(x.key)) || (p?.status ? `<span class="mem-status">${esc(p.status)}</span>` : '')}
         </span>
       </button>`
@@ -1102,35 +1108,36 @@ function renderStage () {
 function openAddServer () {
   let icon64 = null
   const body = el(`
-    <div class="add-server">
-      <div class="as-col">
+    <div class="add-server ${S.canCreate ? '' : 'join-only'}">
+      ${S.canCreate ? `<div class="as-col">
         <h3>Yeni sunucu oluştur</h3>
         <p class="muted small">Sunucun senin ve üyelerin bilgisayarlarında yaşar. Sahibi sensin.</p>
         <button class="icon-pick" type="button"><span>${icon('image', 26)}<small>Simge</small></span></button>
         <label>Sunucu adı<input id="as-name" maxlength="60" value="${esc((S.profile.name || 'Benim') + ' sunucusu')}"></label>
         <button class="btn primary block" id="as-create">Oluştur</button>
       </div>
-      <div class="as-or">veya</div>
+      <div class="as-or">veya</div>` : ''}
       <div class="as-col">
         <h3>Bir sunucuya katıl</h3>
-        <p class="muted small">Arkadaşından aldığın davet kodunu yapıştır.</p>
-        <label>Davet kodu<input id="as-code" placeholder="yanki://3f9a…"></label>
+        <p class="muted small">Sunucu yöneticisinden aldığın davet kodunu yapıştır.</p>
+        <label>Davet kodu<input id="as-code" placeholder="yanki://davet/…"></label>
         <button class="btn block" id="as-join">Katıl</button>
       </div>
     </div>`)
-  const mdl = openModal({ title: 'Sunucu ekle', body, wide: true })
-  $('.icon-pick', body).addEventListener('click', async () => {
+  const mdl = openModal({ title: S.canCreate ? 'Sunucu ekle' : 'Sunucuya katıl', body, wide: S.canCreate })
+  $('.icon-pick', body)?.addEventListener('click', async () => {
     icon64 = await pickImage({ w: 256, h: 256, cover: true, quality: 0.9, gifMax: GIF_LIMITS.icon })
     if (icon64) $('.icon-pick', body).innerHTML = `<img src="${icon64}" alt="">`
   })
-  $('#as-create', body).addEventListener('click', async () => {
+  $('#as-create', body)?.addEventListener('click', async () => {
     const name = $('#as-name', body).value.trim()
     if (!name) return toast('Bir ad gir.')
-    const id = await api.createServer(name, icon64)
+    let id
+    try { id = await api.createServer(name, icon64) } catch (e) { return toast(errText(e)) }
     mdl.close()
     S.servers = (await api.init()).servers
     await selectServer(id)
-    toast('Sunucu oluşturuldu. Davet kodunu sunucu menüsünden paylaşabilirsin.')
+    toast('Sunucu oluşturuldu. Arkadaşlarını sunucu menüsündeki "Davet et" ile çağırabilirsin.')
   })
   $('#as-join', body).addEventListener('click', async () => {
     const code = $('#as-code', body).value.trim()
@@ -1139,16 +1146,16 @@ function openAddServer () {
       mdl.close()
       S.servers = (await api.init()).servers
       await selectServer(id)
-    } catch (e) { toast('Geçersiz davet kodu.') }
+    } catch (e) { toast(errText(e), 5000) }
   })
 }
 
 function serverMenu (anchor) {
   const m = curMeta()
   if (!m || m.pending) return
-  const items = [
-    { label: 'Davet kodunu kopyala', icon: 'link', onClick: () => copyText('yanki://' + m.id, 'Davet kodu kopyalandı — arkadaşına gönder!') }
-  ]
+  const items = m.isAdmin
+    ? [{ label: 'Davet et', icon: 'userPlus', onClick: openInviteModal }]
+    : [{ label: 'Davet için bir yöneticiye başvur', icon: 'userPlus', onClick: () => toast('Davet kodlarını yalnızca sunucu yöneticileri oluşturabilir.') }]
   if (m.isAdmin) {
     items.push('-',
       { label: 'Kanal oluştur', icon: 'plus', onClick: () => channelModal(null, null) },
@@ -1261,8 +1268,8 @@ function serverSettingsModal () {
       <label>Açıklama<textarea id="ss-desc" maxlength="300" rows="3">${esc(m.description || '')}</textarea></label>
       <div class="banner-pick" id="ss-banner" style="${bannerData ? `background-image:url(${bannerData})` : ''}"><span>${icon('image', 18)} Sunucu bannerı (960×320, GIF olabilir)</span></div>
       ${bannerData ? '<button class="btn small" id="ss-banner-rm">Bannerı kaldır</button>' : ''}
-      <h4>Davet kodu</h4>
-      <div class="invite-box"><code>yanki://${m.id}</code><button class="btn small" id="ss-copy">${icon('copy', 15)} Kopyala</button></div>
+      <h4>Davetler</h4>
+      <button class="btn small" id="ss-copy">${icon('userPlus', 15)} Davet oluştur ve yönet</button>
       <h4>Botlar</h4>
       <button class="btn small" id="ss-bots">${icon('bot', 15)} Botları yönet</button>
       ${m.banned.length ? `<h4>Yasaklılar</h4>${m.banned.map(b => `<div class="ban-row"><span>${esc(b.profile?.name || b.key.slice(0, 10))}</span><button class="btn small" data-unban="${b.key}">Yasağı kaldır</button></div>`).join('')}` : ''}
@@ -1281,7 +1288,7 @@ function serverSettingsModal () {
   $('#ss-icon', body).addEventListener('click', async () => { const d = await pickImage({ w: 256, h: 256, cover: true, gifMax: GIF_LIMITS.icon }); if (d) { iconData = d; $('#ss-icon', body).innerHTML = `<img src="${d}" alt="">` } })
   $('#ss-banner', body).addEventListener('click', async () => { const d = await pickImage({ w: 960, h: 320, cover: true, quality: 0.85, gifMax: GIF_LIMITS.banner }); if (d) { bannerData = d; $('#ss-banner', body).style.backgroundImage = `url(${d})` } })
   $('#ss-banner-rm', body)?.addEventListener('click', () => { bannerData = null; $('#ss-banner', body).style.backgroundImage = '' })
-  $('#ss-copy', body).addEventListener('click', () => copyText('yanki://' + m.id, 'Davet kodu kopyalandı'))
+  $('#ss-copy', body).addEventListener('click', () => { mdl.close(); openInviteModal() })
   $('#ss-bots', body).addEventListener('click', () => { mdl.close(); openBotsModal() })
   $$('[data-unban]', body).forEach(b => b.addEventListener('click', async () => { await api.post(S.server, 'unban', { user: b.dataset.unban }); b.closest('.ban-row').remove() }))
 }
@@ -1334,7 +1341,7 @@ function openProfileCard (key, anchor) {
   $('#pc-groups', pop)?.addEventListener('click', (e) => { e.stopPropagation(); groupMenu(key, e.currentTarget) })
   $('#pc-vol', pop)?.addEventListener('input', (e) => voice.setUserVolume(key, e.target.value / 100))
   $('#pc-admin', pop)?.addEventListener('click', async () => { closePopup(); await api.post(S.server, 'role-set', { user: key, role: mem?.admin ? 'member' : 'admin' }) })
-  $('#pc-kick', pop)?.addEventListener('click', async () => { closePopup(); if (await confirmModal('Üyeyi at', `${esc(nameOf(key))} sunucudan atılacak (davet koduyla yeniden katılabilir).`, 'At')) await api.post(S.server, 'kick', { user: key }) })
+  $('#pc-kick', pop)?.addEventListener('click', async () => { closePopup(); if (await confirmModal('Üyeyi at', `${esc(nameOf(key))} sunucudan atılacak (yeni bir davetle yeniden katılabilir).`, 'At')) await api.post(S.server, 'kick', { user: key }) })
   $('#pc-ban', pop)?.addEventListener('click', async () => { closePopup(); if (await confirmModal('Üyeyi yasakla', `${esc(nameOf(key))} kalıcı olarak yasaklanacak; mesajları ve bağlantıları reddedilecek.`, 'Yasakla')) await api.post(S.server, 'ban', { user: key }) })
 }
 
@@ -1423,7 +1430,7 @@ function openProfileSetup () {
 
 async function openSettings (tab = 'profile') {
   const draft = { ...S.profile }
-  const tabs = [['profile', 'Profilim', 'edit'], ['appearance', 'Görünüm', 'palette'], ['activity', 'Etkinlik', 'gamepad'], ['av', 'Ses ve Görüntü', 'mic'], ['screen', 'Ekran Paylaşımı', 'screen'], ['notify', 'Bildirimler', 'bell'], ['net', 'Ağ ve Gizlilik', 'shield'], ['about', 'Hakkında', 'sparkle']]
+  const tabs = [['profile', 'Profilim', 'edit'], ['appearance', 'Görünüm', 'palette'], ['activity', 'Etkinlik', 'gamepad'], ['av', 'Ses ve Görüntü', 'mic'], ['screen', 'Ekran Paylaşımı', 'screen'], ['notify', 'Bildirimler ve pencere', 'bell'], ['net', 'Ağ ve Gizlilik', 'shield'], ['about', 'Hakkında', 'sparkle']]
   const body = el(`<div class="settings"><nav>${tabs.map(([k, l, i]) => `<button data-tab="${k}">${icon(i, 16)}<span>${l}</span></button>`).join('')}</nav><div class="st-pane"></div></div>`)
   let testStream = null
   let testRaf = 0
@@ -1653,9 +1660,13 @@ async function openSettings (tab = 'profile') {
           </select></label>
           <p class="muted small">Özel mesajlar ve arkadaşlık istekleri için "Kapalı" seçilmedikçe her zaman bildirim gelir.</p>
           <label class="check"><input type="checkbox" id="nt-sound" ${settings.sounds ? 'checked' : ''}> Mesaj sesi çal</label>
+          <h4>Pencere</h4>
+          <label class="check"><input type="checkbox" id="nt-tray" ${settings.closeToTray !== false ? 'checked' : ''}> Pencereyi kapatınca YANKI arka planda çalışmaya devam etsin</label>
+          <p class="muted small">${S.platform === 'darwin' ? 'Tamamen kapatmak için menü çubuğundaki YANKI simgesinden "Çıkış"ı seç ya da ⌘Q kullan.' : 'YANKI görev çubuğunun sağındaki simgelere iner. Tamamen kapatmak için oradaki YANKI simgesine sağ tıklayıp "Çıkış"ı seç.'}</p>
         </div>`
       $('#nt-mode', pane).addEventListener('change', e => { settings.notify = e.target.value; saveSettings() })
       $('#nt-sound', pane).addEventListener('change', e => { settings.sounds = e.target.checked; saveSettings() })
+      $('#nt-tray', pane).addEventListener('change', e => { settings.closeToTray = e.target.checked; saveSettings(); api.setCloseToTray?.(settings.closeToTray) })
     } else if (k === 'net') {
       pane.innerHTML = `
         <div class="form">
@@ -1823,6 +1834,12 @@ function bindStatic () {
 
   document.addEventListener('click', onClick)
   document.addEventListener('dblclick', (e) => {
+    const mem = e.target.closest('#members .mem[data-key]')
+    if (mem) {
+      closePopup()
+      if (mem.dataset.key !== S.me) openMiniDM(mem.dataset.key)
+      return
+    }
     const t = e.target.closest('.tile')
     if (t && !t.classList.contains('music') && $('video', t) && !e.target.closest('button')) toggleFullscreen(t)
   })
@@ -2016,7 +2033,8 @@ function onContext (e) {
     menu([{ label: 'Kanalı düzenle', icon: 'settings', onClick: () => channelModal(ch.dataset.id) }, { label: 'Botlar', icon: 'bot', onClick: openBotsModal }], pointAnchor(e), { align: 'below' })
   } else if (srv) {
     e.preventDefault()
-    menu([{ label: 'Davet kodunu kopyala', icon: 'link', onClick: () => copyText('yanki://' + srv.dataset.id, 'Davet kodu kopyalandı') }], pointAnchor(e), { align: 'below' })
+    const sm = S.meta.get(srv.dataset.id)
+    if (sm?.isAdmin) menu([{ label: 'Davet et', icon: 'userPlus', onClick: async () => { if (S.server !== srv.dataset.id || S.mode !== 'server') await selectServer(srv.dataset.id); openInviteModal() } }], pointAnchor(e), { align: 'below' })
   }
 }
 

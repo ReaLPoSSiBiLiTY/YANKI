@@ -3,6 +3,18 @@
 // (scripts/release-notes.js) bu listeden üretilir. Yeni sürümde en üste ekle.
 const CHANGELOG = [
   {
+    version: '1.3.0',
+    date: '2026-10-26',
+    title: 'Davetle kullanım, grup simgeleri ve arka planda çalışma',
+    items: [
+      { icon: 'lock', title: 'Yalnızca davetle', desc: 'YANKI artık yalnızca bir davet koduyla kullanılabiliyor. Davetleri sunucu yöneticileri oluşturur; süresi ve kaç kişinin kullanabileceği seçilir, istenildiği an iptal edilir. Eski kalıcı davet kodları artık çalışmaz.' },
+      { icon: 'shield', title: 'Davetsiz erişim kapalı', desc: 'Sunucu verisi yalnızca üyelerle ve geçerli bir davet sunanlarla paylaşılır. Ortak sunucusu olmayan biri arkadaşlık isteği ya da özel mesaj gönderemez; yeni sunucuyu yalnızca mevcut yöneticiler açabilir.' },
+      { icon: 'star', title: 'Grup simgeleri', desc: 'Gruplar ve kanal erişimi penceresinden her gruba bir simge seç (ya da simgesiz bırak). Simge, üye listesinde o gruptaki kişilerin adının yanında görünür.' },
+      { icon: 'chat', title: 'Çift tıkla mesaj at', desc: 'Sağdaki üye listesinde birine çift tıklayınca sağ altta onunla özel mesaj penceresi açılır.' },
+      { icon: 'download', title: 'Arka planda çalışma', desc: 'Pencereyi kapatınca YANKI görev çubuğunun sağındaki simgelere (macOS\'ta menü çubuğuna) iner, sesli sohbet sürer. Tamamen kapatmak için simgeye sağ tıklayıp "Çıkış"ı seç. Ayarlar › Bildirimler ve pencere\'den kapatılabilir.' }
+    ]
+  },
+  {
     version: '1.2.2',
     date: '2026-10-19',
     title: 'Lisans ve kullanım notu',

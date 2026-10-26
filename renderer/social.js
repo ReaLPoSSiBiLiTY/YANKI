@@ -89,7 +89,7 @@ function renderHome () {
     html = `
       <div class="add-friend">
         <h2>Arkadaş ekle</h2>
-        <p class="muted">Arkadaşının <b>arkadaş kodunu</b> yapıştır. İsteğin ona iletilir; kabul ettiğinde arkadaş listene eklenir. Hiçbir ortak sunucunuz olmasa da olur.</p>
+        <p class="muted">Arkadaşının <b>arkadaş kodunu</b> yapıştır. İsteğin ona iletilir; kabul ettiğinde arkadaş listene eklenir. Yalnızca ortak bir sunucuda bulunduğun kişileri ekleyebilirsin.</p>
         <div class="af-input"><input id="af-code" placeholder="yanki://arkadas/…" autocomplete="off"><button class="btn primary" data-act="friend-send">İstek gönder</button></div>
         <div class="af-mine">
           <div class="muted small">Senin arkadaş kodun — bunu arkadaşına gönder</div>
@@ -183,7 +183,7 @@ async function friendAction (act, key) {
       if (S.dm === key) { S.dm = null }
     }
     if (act === 'unblock') { await api.unblock(key); S.blocked = await api.blockedList() }
-  } catch (e) { toast(e.message || String(e)) }
+  } catch (e) { toast(window.errText ? window.errText(e) : e.message || String(e), 5000) }
   await refreshDMs()
   renderAll()
 }
@@ -198,7 +198,7 @@ async function sendFriendCode () {
     S.homeTab = 'pending'
     await refreshDMs()
     renderAll()
-  } catch (e) { toast(e.message || 'Geçersiz arkadaş kodu') }
+  } catch (e) { toast(window.errText ? window.errText(e) : e.message || 'Geçersiz arkadaş kodu', 5000) }
 }
 
 function friendMoreMenu (key, anchor) {

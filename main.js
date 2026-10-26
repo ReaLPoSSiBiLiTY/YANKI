@@ -1,5 +1,5 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, Notification, systemPreferences, net, Menu } = require('electron')
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, Notification, systemPreferences, net, Menu, Tray, nativeImage } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { P2PNode } = require('./src/p2p/node')
@@ -45,6 +45,37 @@ let node = null
 let activity = null
 let updater = null
 let pendingShare = null
+let tray = null
+let closeToTray = true // arayüz ayarından gelir
+let trayHintShown = false
+let quitting = false
+
+// Pencereyi kapatınca uygulama görev çubuğunun sağındaki simgeye (macOS'ta menü çubuğuna) iner;
+// tamamen kapatmak için simgeye sağ tıklayıp "Çıkış" seçilir.
+function showWindow () {
+  if (!win) return createWindow()
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
+function createTray () {
+  if (tray) return
+  const src = nativeImage.createFromPath(path.join(__dirname, 'renderer', 'assets', 'icon.png'))
+  const size = process.platform === 'darwin' ? 18 : 16
+  const img = nativeImage.createEmpty()
+  img.addRepresentation({ scaleFactor: 1, buffer: src.resize({ width: size, height: size, quality: 'best' }).toPNG() })
+  img.addRepresentation({ scaleFactor: 2, buffer: src.resize({ width: size * 2, height: size * 2, quality: 'best' }).toPNG() })
+  tray = new Tray(img)
+  tray.setToolTip(APP_NAME)
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'YANKI\'yı aç', click: showWindow },
+    { type: 'separator' },
+    { label: 'Çıkış', click: () => { quitting = true; app.quit() } }
+  ]))
+  tray.on('click', () => { if (process.platform !== 'darwin') { if (win && win.isVisible() && win.isFocused()) win.hide(); else showWindow() } })
+  tray.on('double-click', showWindow)
+}
 
 function send (ev) {
   if (win && !win.isDestroyed()) win.webContents.send('p2p:event', ev)
@@ -89,6 +120,15 @@ function createWindow () {
     if (/^https?:\/\//i.test(url)) shell.openExternal(url)
   })
   win.on('focus', () => send({ type: 'focus' }))
+  win.on('close', (e) => {
+    if (quitting || !closeToTray) return
+    e.preventDefault()
+    win.hide()
+    if (!trayHintShown && Notification.isSupported()) {
+      trayHintShown = true
+      new Notification({ title: APP_NAME, body: process.platform === 'darwin' ? 'YANKI arka planda çalışmaya devam ediyor. Tamamen kapatmak için menü çubuğundaki simgeden ya da ⌘Q ile çıkış yap.' : 'YANKI arka planda çalışmaya devam ediyor. Tamamen kapatmak için görev çubuğunun sağındaki YANKI simgesine sağ tıklayıp "Çıkış"ı seç.' }).show()
+    }
+  })
   win.on('page-title-updated', (e) => e.preventDefault())
 }
 
@@ -131,10 +171,11 @@ function registerIpc () {
   const h = (ch, fn) => ipcMain.handle(ch, (_e, ...a) => fn(...a))
   h('p2p:init', () => ({ me: node.me, profile: node.profile, servers: node.listServers(), platform: process.platform, version: app.getVersion() }))
   h('p2p:createServer', (name, icon) => node.createServer(name, icon))
-  h('p2p:join', (code) => {
-    const id = String(code || '').trim().replace(/^yanki:\/*/i, '').replace(/[^0-9a-f]/gi, '').toLowerCase()
-    return node.joinServer(id)
-  })
+  h('p2p:join', (code) => node.joinServer(String(code || '').trim()))
+  h('p2p:canCreate', () => node.canCreateServer())
+  h('invite:create', (s, o) => node.createInvite(s, o || {}))
+  h('invite:list', (s) => node.invites(s))
+  h('invite:revoke', (s, id) => node.revokeInvite(s, id))
   h('p2p:leave', (id) => node.leaveServer(id))
   h('p2p:post', (s, type, data) => node.post(s, type, data))
   h('p2p:meta', (s) => node.meta(s))
@@ -207,7 +248,9 @@ function registerIpc () {
   ipcMain.on('app:badge', (_e, count) => {
     try { app.setBadgeCount(count) } catch {}
     if (win && process.platform === 'win32') win.flashFrame(count > 0 && !win.isFocused())
+    tray?.setToolTip(count > 0 ? `${APP_NAME} — ${count} okunmamış` : APP_NAME)
   })
+  ipcMain.on('app:closeToTray', (_e, on) => { closeToTray = !!on })
   ipcMain.on('app:open', (_e, url) => { if (/^https?:\/\//i.test(url)) shell.openExternal(url) })
 }
 
@@ -338,7 +381,8 @@ async function linkPreview (url) {
 app.whenReady().then(async () => {
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
   setupSession()
-  node = new P2PNode(path.join(app.getPath('userData'), 'p2p'))
+  // yanki.founders: davetsiz sunucu açabilecek kurucu anahtarları (kimlik kaybolursa diye)
+  node = new P2PNode(path.join(app.getPath('userData'), 'p2p'), { founders: (require('./package.json').yanki || {}).founders || [] })
   await node.start()
   node.on('ops', e => send({ type: 'ops', ...e }))
   node.on('peers', servers => send({ type: 'peers', servers }))
@@ -358,6 +402,7 @@ app.whenReady().then(async () => {
 
   registerIpc()
   createWindow()
+  try { createTray() } catch (e) { console.error('tray', e) }
   activity.start()
 
   updater = new Updater(app, net, shell, UPDATE_REPO)
@@ -367,22 +412,21 @@ app.whenReady().then(async () => {
   setTimeout(autoCheck, 8000)
   setInterval(autoCheck, 4 * 60 * 60 * 1000)
 
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
+  app.on('activate', () => showWindow())
 })
 
-app.on('second-instance', () => {
-  if (win) { if (win.isMinimized()) win.restore(); win.focus() }
-})
+app.on('second-instance', () => showWindow())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-let quitting = false
+let shuttingDown = false
 app.on('before-quit', async (e) => {
-  if (quitting || !node) return
+  quitting = true // pencerenin "kapat → simgeye in" davranışını atla
+  if (shuttingDown || !node) return
   e.preventDefault()
-  quitting = true
+  shuttingDown = true
   activity?.stop()
   try { await Promise.race([node.destroy(), new Promise(r => setTimeout(r, 1500))]) } catch {}
   app.quit()

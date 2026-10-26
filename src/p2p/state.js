@@ -15,6 +15,7 @@ const OP_TYPES = new Set([
   'category-create', 'category-update',
   'channel-create', 'channel-update', 'channel-key',
   'group-create', 'group-update', 'group-member',
+  'invite-create', 'invite-revoke',
   'message', 'message-edit', 'message-delete', 'reaction', 'pin',
   'bot-config', 'poll-vote', 'music'
 ])
@@ -38,6 +39,34 @@ const LIMITS = { avatar: 3_700_000, banner: 7_300_000, icon: 3_700_000, attachme
 
 const IMG_RE = /^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/
+
+// Grup simgeleri (üye listesinde adın yanında görünür). Boş: simgesiz
+const GROUP_ICONS = ['shield', 'star', 'crown', 'zap', 'heart', 'flame', 'gem', 'leaf', 'gamepad', 'music', 'headphones', 'rocket', 'trophy', 'sword', 'skull']
+const groupIcon = (v) => GROUP_ICONS.includes(v) ? v : ''
+
+// Davetler: v1.3'ten itibaren sunucuya yalnızca yöneticinin ürettiği bir davetle katılınır.
+// Bu tarihten önceki (eski kalıcı kodla yapılmış) katılımlar geçerli sayılır.
+const INVITE_CUTOFF = Date.UTC(2026, 10, 1) // 1 Kasım 2026
+const SECRET_RE = /^[0-9a-f]{32}$/
+const inviteHash = (secret) => crypto.createHash('sha256').update('yanki/invite/' + secret).digest('hex')
+
+const inviteState = (inv, at) => !inv ? 'invalid' : inv.revoked ? 'revoked' : inv.exp && at > inv.exp ? 'expired' : inv.max && inv.uses >= inv.max ? 'used' : 'ok'
+
+// Davet şu an (ya da verilen zamanda) kullanılabilir mi?
+function inviteStatus (s, secret, at = Date.now()) {
+  if (typeof secret !== 'string' || !SECRET_RE.test(secret)) return 'invalid'
+  return inviteState(s.invitesByHash.get(inviteHash(secret)), at)
+}
+
+// Saatler arasındaki farklar yüzünden katılım kaydı davetten "önce" görünebilir; bu yüzden
+// süre denetiminde 10 dakika pay bırakılır ve davetten önce gelen katılımlar bekletilir.
+const SKEW = 10 * 60 * 1000
+function admitWith (s, inv, a, ts) {
+  if (s.members.has(a) || s.banned.has(a)) return
+  if (inviteState(inv, ts - SKEW) !== 'ok') return
+  inv.uses++
+  s.members.set(a, { joinedAt: ts, invitedBy: inv.by, invite: inv.id })
+}
 const YT_ID = /^[A-Za-z0-9_-]{11}$/
 const B64 = /^[A-Za-z0-9+/=]+$/
 
@@ -270,6 +299,9 @@ function createServerState (serverId, genesis, hooks = {}) {
     categories: new Map(),
     channels: new Map(),
     groups: new Map(),
+    invites: new Map(), // davet op kimliği -> { id, h, exp, max, uses, by, ts, note, revoked }
+    invitesByHash: new Map(),
+    pendingJoins: new Map(), // davetinden önce gelen katılımlar
     epochs: new Map(), // kanal -> Map(epochId -> { id, ts, check, recipients:Set })
     curEpoch: new Map(), // kanal -> en güncel epochId
     keys: new Map(), // epochId -> kanal anahtarı (yalnızca bende açılabilenler)
@@ -318,9 +350,35 @@ function applyServerOp (s, op) {
   const canModerate = (x, target) => isAdmin(x) && target !== owner && (!s.admins.has(target) || x === owner)
 
   switch (op.type) {
-    case 'member-join':
-      if (!s.members.has(a)) s.members.set(a, { joinedAt: op.ts })
+    case 'member-join': {
+      if (s.members.has(a) || s.banned.has(a)) break
+      if (a === owner || (op.ts < INVITE_CUTOFF && !d.invite)) { s.members.set(a, { joinedAt: op.ts, invitedBy: null }); break }
+      if (typeof d.invite !== 'string' || !SECRET_RE.test(d.invite)) break
+      const h = inviteHash(d.invite)
+      const inv = s.invitesByHash.get(h)
+      if (inv) admitWith(s, inv, a, op.ts)
+      else {
+        if (!s.pendingJoins.has(h)) s.pendingJoins.set(h, [])
+        s.pendingJoins.get(h).push({ a, ts: op.ts })
+      }
       break
+    }
+    case 'invite-create': {
+      if (!isAdmin(a) || typeof d.h !== 'string' || !/^[0-9a-f]{64}$/.test(d.h) || s.invitesByHash.has(d.h)) break
+      const exp = Number.isFinite(d.exp) && d.exp > op.ts ? Math.floor(d.exp) : 0
+      const max = Number.isInteger(d.max) && d.max > 0 ? Math.min(d.max, 1000) : 0
+      const inv = { id: op.id, h: d.h, exp, max, uses: 0, by: a, ts: op.ts, note: str(d.note, 60), revoked: false }
+      s.invites.set(op.id, inv)
+      s.invitesByHash.set(d.h, inv)
+      for (const j of s.pendingJoins.get(d.h) || []) admitWith(s, inv, j.a, j.ts)
+      s.pendingJoins.delete(d.h)
+      break
+    }
+    case 'invite-revoke': {
+      const inv = s.invites.get(d.target)
+      if (inv && isAdmin(a)) inv.revoked = true
+      break
+    }
     case 'member-leave':
       if (a !== owner) s.members.delete(a)
       break
@@ -368,7 +426,7 @@ function applyServerOp (s, op) {
     }
     case 'group-create':
       if (!isAdmin(a)) break
-      s.groups.set(op.id, { id: op.id, name: str(d.name, 40) || 'Grup', color: COLOR_RE.test(d.color || '') ? d.color : '#9b6bff', members: new Set(), order: op.ts })
+      s.groups.set(op.id, { id: op.id, name: str(d.name, 40) || 'Grup', color: COLOR_RE.test(d.color || '') ? d.color : '#9b6bff', icon: groupIcon(d.icon), members: new Set(), order: op.ts })
       break
     case 'group-update': {
       const gr = s.groups.get(d.target)
@@ -376,6 +434,7 @@ function applyServerOp (s, op) {
       if (d.deleted) { s.groups.delete(d.target); break }
       if (typeof d.name === 'string' && d.name.trim()) gr.name = str(d.name, 40)
       if (COLOR_RE.test(d.color || '')) gr.color = d.color
+      if (typeof d.icon === 'string') gr.icon = groupIcon(d.icon)
       break
     }
     case 'group-member': {
@@ -550,5 +609,6 @@ function deriveDM (dmId, me, other, opsIterable) {
 module.exports = {
   derive, deriveDM, createServerState, applyServerOp, createDMState, applyDMOp,
   musicState, rollDice, parsePoll, allowedIn, isPrivate, after,
+  inviteStatus, inviteHash, GROUP_ICONS, INVITE_CUTOFF,
   OP_TYPES, DM_TYPES, BOTS, LIMITS, sanitizeProfile, IMG_RE
 }
