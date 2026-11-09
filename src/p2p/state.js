@@ -101,6 +101,22 @@ function sanitizeAttachments (list) {
   return out
 }
 
+// Paylaşılan dosyalar: mesajda yalnızca künyesi (özet, ad, boyut) durur; içerik
+// eşler arasında istek üzerine, parça parça aktarılır.
+const FILE_MAX = 2 * 1024 * 1024 * 1024
+function sanitizeFiles (list) {
+  if (!Array.isArray(list)) return []
+  const out = []
+  for (const f of list.slice(0, 10)) {
+    if (!f || typeof f.h !== 'string' || !/^[0-9a-f]{64}$/.test(f.h)) continue
+    const size = Number.isSafeInteger(f.size) && f.size >= 0 && f.size <= FILE_MAX ? f.size : -1
+    if (size < 0) continue
+    const name = str(f.name, 200).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'dosya'
+    out.push({ h: f.h, name, size, mime: str(f.mime, 100) })
+  }
+  return out
+}
+
 function sortOps (ops) {
   return [...ops].sort((a, b) => (a.ts - b.ts) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
@@ -161,15 +177,16 @@ function applyMessageOp (s, op, ctx) {
       } else if (ctx.mustEncrypt && ctx.mustEncrypt(channel)) return // özel kanala şifresiz mesaj kabul edilmez
       const text = locked ? '' : str(d.text, 4000)
       const attachments = locked ? [] : sanitizeAttachments(d.attachments)
+      const files = locked ? [] : sanitizeFiles(d.files)
       let poll = null
       const bots = ctx.botsFor(channel)
       if (!locked && d.poll && bots.has('poll')) {
         const p = sanitizePoll(d.poll)
         if (p) poll = { ...p, votes: new Map() }
       }
-      if (!locked && !poll && !text.trim() && !attachments.length) return
+      if (!locked && !poll && !text.trim() && !attachments.length && !files.length) return
       const m = {
-        id: op.id, channel, author: a, ts: op.ts, text, attachments,
+        id: op.id, channel, author: a, ts: op.ts, text, attachments, files,
         replyTo: typeof d.replyTo === 'string' ? d.replyTo : null,
         edited: null, deleted: false, reactions: {}, bot: null, poll, locked
       }
@@ -199,7 +216,7 @@ function applyMessageOp (s, op, ctx) {
         d = { ...plain, target: d.target }
       }
       const text = str(d.text, 4000)
-      if (!text.trim() && !m.attachments.length) return
+      if (!text.trim() && !m.attachments.length && !m.files?.length) return
       m.text = text
       m.edited = op.ts
       m.locked = false
@@ -609,6 +626,6 @@ function deriveDM (dmId, me, other, opsIterable) {
 module.exports = {
   derive, deriveDM, createServerState, applyServerOp, createDMState, applyDMOp,
   musicState, rollDice, parsePoll, allowedIn, isPrivate, after,
-  inviteStatus, inviteHash, GROUP_ICONS, INVITE_CUTOFF,
+  inviteStatus, inviteHash, GROUP_ICONS, INVITE_CUTOFF, sanitizeFiles, FILE_MAX,
   OP_TYPES, DM_TYPES, BOTS, LIMITS, sanitizeProfile, IMG_RE
 }

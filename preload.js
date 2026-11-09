@@ -1,5 +1,5 @@
 'use strict'
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 const inv = (ch, ...a) => ipcRenderer.invoke(ch, ...a)
 const snd = (ch, ...a) => ipcRenderer.send(ch, ...a)
 
@@ -34,6 +34,14 @@ contextBridge.exposeInMainWorld('yanki', {
   activityCurrent: () => inv('activity:current'),
   activities: () => inv('activity:all'),
   canCreateServer: () => inv('p2p:canCreate'),
+  pathForFile: (f) => { try { return webUtils.getPathForFile(f) || '' } catch { return '' } },
+  shareFile: (p, ctx) => inv('file:share', p, ctx),
+  hasFile: (h) => inv('file:has', h),
+  fileCtx: (h, ctx) => inv('file:ctx', h, ctx),
+  downloadFile: (file, ctx, author) => inv('file:download', file, ctx, author),
+  cancelDownload: (id) => inv('file:cancel', id),
+  showFile: (p) => snd('file:show', p),
+  sendAudio: (to, pkt) => snd('voice:audio', to, pkt),
   createInvite: (s, o) => inv('invite:create', s, o),
   invites: (s) => inv('invite:list', s),
   revokeInvite: (s, id) => inv('invite:revoke', s, id),

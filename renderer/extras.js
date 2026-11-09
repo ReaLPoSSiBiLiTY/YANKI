@@ -289,8 +289,9 @@ function renderMiniBody (bottom = false) {
     if (x.poll) content = `<div class="md-poll">${icon('poll', 14)} <b>${esc(x.poll.question)}</b><button class="link-like small" data-md="full">Oy vermek için aç</button></div>`
     else if (x.text) content = `<div class="md-text">${md(x.text)}</div>`
     const imgs = (x.attachments || []).map(a => safeImg(a.data) ? `<img src="${a.data}" alt="" data-act="lightbox">` : '').join('')
+    const filesPart = filesHTML(x)
     const bot = x.bot?.id === 'dice' && x.bot.rolls ? `<div class="md-text muted">🎲 ${esc(x.bot.expr)} = <b>${x.bot.total}</b></div>` : ''
-    return `<div class="md-msg ${own ? 'own' : ''} ${grouped ? 'grouped' : ''}" title="${esc(fmtHM(x.ts))}">${!own && !grouped ? avatar(x.author, 22) : '<span class="md-sp"></span>'}<div class="md-bubble">${content}${imgs ? `<div class="md-imgs">${imgs}</div>` : ''}${bot}</div></div>`
+    return `<div class="md-msg ${own ? 'own' : ''} ${grouped ? 'grouped' : ''}" title="${esc(fmtHM(x.ts))}">${!own && !grouped ? avatar(x.author, 22) : '<span class="md-sp"></span>'}<div class="md-bubble">${content}${filesPart}${imgs ? `<div class="md-imgs">${imgs}</div>` : ''}${bot}</div></div>`
   }).join('')
   if (bottom || near) box.scrollTop = box.scrollHeight
   for (const img of $$('img', box)) img.addEventListener('load', () => { if (bottom || near) box.scrollTop = box.scrollHeight }, { once: true })
@@ -697,4 +698,189 @@ function renderLock () {
   setTimeout(() => $('#lock-code', box)?.focus(), 50)
 }
 
-Object.assign(window, { GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })
+// =====================================================================
+// Dosya paylaşımı
+// =====================================================================
+S.files = [] // gönderilmeyi bekleyen dosyalar
+S.dl = {} // özet -> indirme durumu
+const DANGER_EXT = /\.(exe|msi|msix|appx|bat|cmd|com|scr|pif|cpl|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|hta|jar|lnk|url|reg|dll|sys|app|pkg|dmg|command|tool|sh|run|bin|apk|iso|img|vhd|docm|xlsm|pptm)$/i
+const ARCHIVE_EXT = /\.(zip|rar|7z|tar|gz|bz2|xz)$/i
+const isDanger = (name) => DANGER_EXT.test(name || '')
+
+function fmtSize (n) {
+  if (!Number.isFinite(n)) return ''
+  if (n < 1024) return n + ' B'
+  if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB'
+  if (n < 1024 ** 3) return (n / 1024 / 1024).toFixed(1) + ' MB'
+  return (n / 1024 ** 3).toFixed(2) + ' GB'
+}
+
+function fileIcon (f) {
+  const m = f.mime || ''
+  if (isDanger(f.name)) return 'shield'
+  if (m.startsWith('image/')) return 'image'
+  if (m.startsWith('audio/')) return 'music'
+  if (m.startsWith('video/')) return 'screen'
+  if (ARCHIVE_EXT.test(f.name)) return 'folderPlus'
+  return 'paperclip'
+}
+
+function fileCtx () {
+  const c = chatCtx()
+  if (!c) return null
+  return c.kind === 'dm' ? { dm: c.key } : { server: c.server, channel: c.channel }
+}
+
+// Seçilen/sürüklenen dosyaları paylaşıma hazırla (özet hesaplanıp önbelleğe kopyalanır)
+async function stageFiles (list) {
+  for (const f of list) {
+    if (S.files.length >= 10) { toast('Bir mesajda en fazla 10 dosya.'); break }
+    const p = api.pathForFile?.(f)
+    if (!p) { toast(`"${f.name || 'dosya'}" eklenemedi: yalnızca bilgisayarındaki dosyalar paylaşılabilir.`); continue }
+    if (f.size > 2 * 1024 ** 3) { toast(`"${f.name}" çok büyük (en fazla 2 GB).`); continue }
+    const item = { busy: true, name: f.name, size: f.size, mime: f.type || '' }
+    S.files.push(item)
+    renderComposerState()
+    try {
+      const meta = await api.shareFile(p, fileCtx())
+      Object.assign(item, meta, { busy: false })
+    } catch (e) {
+      S.files.splice(S.files.indexOf(item), 1)
+      toast(errText(e))
+    }
+    renderComposerState()
+  }
+}
+
+function stagedFilesHTML () {
+  return S.files.map((f, i) => `
+    <div class="ap-item file ${f.busy ? 'busy' : ''}">
+      <span class="fc-icon">${f.busy ? '<span class="spinner small"></span>' : icon(fileIcon(f), 20)}</span>
+      <button data-act="remove-file" data-i="${i}" title="Kaldır">${icon('x', 14)}</button>
+      <span>${esc(f.name)}<small>${f.busy ? 'Hazırlanıyor…' : fmtSize(f.size)}</small></span>
+    </div>`).join('')
+}
+
+// Gönderirken: dosyalar bu sohbette paylaşıldı (yalnızca buraya erişimi olanlar indirebilir)
+async function takeStagedFiles () {
+  if (S.files.some(f => f.busy)) throw new Error('Dosyalar hâlâ hazırlanıyor, birazdan tekrar dene.')
+  const ctx = fileCtx()
+  const out = S.files.map(f => ({ h: f.h, name: f.name, size: f.size, mime: f.mime }))
+  for (const f of out) await api.fileCtx(f.h, ctx)
+  return out
+}
+
+function fileCardInner (f, own) {
+  const d = S.dl[f.h]
+  let action
+  if (d && !d.done && !d.error) action = `<button class="btn small" data-act="file-cancel" data-h="${f.h}">İptal</button>`
+  else if (d?.done) action = `<button class="btn small" data-act="file-show" data-h="${f.h}">${icon('folderPlus', 14)} Klasörde göster</button>`
+  else action = `<button class="btn small ${isDanger(f.name) ? 'danger-ghost' : 'primary'}" data-act="file-dl" data-h="${f.h}">${icon('download', 14)} ${own ? 'Kaydet' : 'İndir'}</button>`
+  const pct = d && d.total ? Math.round(d.got / d.total * 100) : 0
+  const sub = d?.error ? `<span class="fc-err">${esc(d.error)}</span>`
+    : d && !d.done ? `İndiriliyor… %${pct} · ${fmtSize(d.got)} / ${fmtSize(d.total)}`
+      : `${fmtSize(f.size)}${isDanger(f.name) ? ' · <span class="fc-warn">Program / betik dosyası</span>' : ''}`
+  return `<span class="fc-icon">${icon(fileIcon(f), 22)}</span>
+    <div class="fc-meta"><b title="${esc(f.name)}">${esc(f.name)}</b><small>${sub}</small>${d && !d.done && !d.error ? `<div class="meter"><i style="width:${pct}%"></i></div>` : ''}</div>
+    ${action}`
+}
+
+function filesHTML (x) {
+  if (!x.files || !x.files.length) return ''
+  return `<div class="files">${x.files.map(f => `<div class="file-card ${isDanger(f.name) ? 'danger' : ''}" data-fh="${f.h}" data-mid="${x.id}">${fileCardInner(f, x.author === S.me)}</div>`).join('')}</div>`
+}
+
+function updateFileCards (h) {
+  for (const node of $$(`.file-card[data-fh="${h}"]`)) {
+    const msg = findMsg(node.dataset.mid)
+    const f = msg?.files?.find(x => x.h === h)
+    if (f) node.innerHTML = fileCardInner(f, msg.author === S.me)
+  }
+}
+
+function findMsg (id) {
+  return S.msgs.find(m => m.id === id) || S.mini?.msgs?.find(m => m.id === id) || null
+}
+
+// İndirmeden önce güvenlik uyarısı
+async function downloadFileFrom (node) {
+  const card = node.closest('.file-card')
+  const msg = findMsg(card?.dataset.mid)
+  const f = msg?.files?.find(x => x.h === node.dataset.h)
+  if (!f) return
+  const inMini = !!node.closest('#mini-dm')
+  const ctx = inMini ? { dm: S.mini.key } : fileCtx()
+  const danger = isDanger(f.name)
+  const own = msg.author === S.me
+  const ok = own || await new Promise((resolve) => {
+    openModal({
+      title: 'Dosyayı indir',
+      body: el(`
+        <div class="dl-warn">
+          <div class="dl-file ${danger ? 'danger' : ''}"><span class="fc-icon">${icon(fileIcon(f), 24)}</span><div><b>${esc(f.name)}</b><small>${fmtSize(f.size)} · Gönderen: ${esc(nameOf(msg.author))}</small></div></div>
+          <div class="warn-box">${icon('shield', 18)}<div><b>Dikkatli ol.</b> Yalnızca güvendiğin kişilerden gelen ve beklediğin dosyaları indir. Dosyalar virüs ya da zararlı yazılım içerebilir; YANKI dosyaların içeriğini denetlemez.</div></div>
+          ${danger ? `<div class="warn-box red">${icon('alert', 18)}<div><b>Bu bir program ya da betik dosyası.</b> Açıldığında bilgisayarında her şeyi yapabilir. Gönderen kişiyi tanımıyorsan, dosyayı beklemiyorsan ya da hesabının ele geçirilmiş olabileceğinden şüpheleniyorsan indirme.</div></div>` : ''}
+        </div>`),
+      actions: [
+        { label: 'İptal', onClick: () => resolve(false) },
+        { label: danger ? 'Riski anlıyorum, devam et' : 'Devam et', kind: danger ? 'danger' : 'primary', onClick: () => resolve(true) }
+      ],
+      onClose: () => resolve(false)
+    })
+  })
+  if (!ok) return
+  try {
+    const job = await api.downloadFile({ h: f.h, name: f.name, size: f.size }, ctx, msg.author)
+    if (!job) return // kaydetme penceresi iptal edildi
+    S.dl[f.h] = { job, got: 0, total: f.size }
+    updateFileCards(f.h)
+  } catch (e) { toast(errText(e)) }
+}
+
+function onFileProgress (e) {
+  const d = S.dl[e.h] || (S.dl[e.h] = { job: e.job, got: 0, total: e.total })
+  if (d.job !== e.job) return
+  if (Number.isFinite(e.got)) d.got = e.got
+  if (Number.isFinite(e.total)) d.total = e.total
+  if (e.error) { d.error = e.error; toast(e.error, 6000) }
+  if (e.done) { d.done = true; d.path = e.path; toast('İndirildi: ' + (e.path || '').split(/[\\/]/).pop()) }
+  updateFileCards(e.h)
+}
+
+// =====================================================================
+// Dış bağlantı uyarısı
+// =====================================================================
+function hostOf (u) { try { return new URL(u).hostname.toLowerCase() } catch { return '' } }
+
+function openLink (url) {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return
+  const host = hostOf(url)
+  if (!host) return
+  if ((settings.trustedHosts || []).includes(host)) { api.openExternal(url); return }
+  const spoof = /(^|\.)xn--/.test(host) || /[^\x00-\x7f]/.test(new URL(url).hostname)
+  const body = el(`
+    <div class="link-warn">
+      <p>YANKI dışında bir web sitesine gitmek üzeresin:</p>
+      <div class="lw-box"><b>${esc(host)}</b><code>${esc(url.length > 400 ? url.slice(0, 400) + '…' : url)}</code></div>
+      <div class="warn-box">${icon('shield', 18)}<div>Bağlantıları yalnızca güvendiğin kişilerden geliyorsa aç. Sahte giriş sayfaları şifreni ya da hesap bilgilerini çalmaya çalışabilir; tanımadığın sitelerde bilgi girme, dosya indirme.</div></div>
+      ${spoof ? `<div class="warn-box red">${icon('alert', 18)}<div>Bu adres farklı alfabelerden harfler içeriyor; tanıdık bir sitenin taklidi olabilir.</div></div>` : ''}
+      <label class="check"><input type="checkbox" id="lw-trust"> <span><b>${esc(host)}</b> için bir daha sorma</span></label>
+    </div>`)
+  openModal({
+    title: 'Dış bağlantı',
+    body,
+    actions: [{ label: 'İptal' }, {
+      label: 'Devam et',
+      kind: 'primary',
+      onClick: (node) => {
+        if ($('#lw-trust', node).checked) {
+          settings.trustedHosts = [...new Set([...(settings.trustedHosts || []), host])].slice(-200)
+          saveSettings()
+        }
+        api.openExternal(url)
+      }
+    }]
+  })
+}
+
+Object.assign(window, { stageFiles, stagedFilesHTML, takeStagedFiles, filesHTML, updateFileCards, downloadFileFrom, onFileProgress, openLink, fmtSize, GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })

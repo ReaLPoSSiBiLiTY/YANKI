@@ -13,7 +13,8 @@ const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
 const { EventEmitter } = require('events')
-const { derive, deriveDM, applyServerOp, applyDMOp, musicState, allowedIn, isPrivate, after, inviteStatus, inviteHash, OP_TYPES, DM_TYPES, BOTS, sanitizeProfile } = require('./state')
+const { derive, deriveDM, applyServerOp, applyDMOp, musicState, allowedIn, isPrivate, after, inviteStatus, inviteHash, OP_TYPES, DM_TYPES, BOTS, sanitizeProfile, FILE_MAX } = require('./state')
+const { FileStore, Download } = require('./files')
 const identity = require('./identity')
 
 const HEX64 = /^[0-9a-f]{64}$/
@@ -23,6 +24,9 @@ const BATCH_BYTES = 4 * 1024 * 1024
 const PRESENCE_MS = 15000
 const ONLINE_TTL = 45000
 const SIG_QUEUE_MS = 25000
+// Geçici mesajların zaman denetimi. Saat farkı düzeltildikten sonra bile birkaç dakikalık
+// farklara dayanıklı olsun (eskiden 90 sn'ydi; saati yanlış kişiler hiç duyulamıyordu).
+const EPH_WINDOW = 5 * 60 * 1000
 const ICON_RE = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/
 
 const sha256 = (x) => crypto.createHash('sha256').update(x).digest()
@@ -157,6 +161,9 @@ class P2PNode extends EventEmitter {
     this.activity = null
     this.acts = new Map() // başkalarının son bilinen etkinliği
     this._lastTs = 0
+    this.clockFix = 0 // bu bilgisayarın saat hatası (eşlerin ortak saatine göre), ms
+    this.routes = new Map() // anahtar -> bize onun mesajlarını ileten eş (aktarmalı ses için)
+    this.downloads = new Map()
     this.on('activity', (e) => { if (e.from !== this.me) this.acts.set(e.from, { act: e.act, at: Date.now() }) })
   }
 
@@ -171,6 +178,7 @@ class P2PNode extends EventEmitter {
       saved.xseed = crypto.randomBytes(32).toString('hex')
       fs.writeFileSync(idFile, JSON.stringify(saved), { mode: 0o600 })
     }
+    this.files = new FileStore(path.join(this.dir, 'files'))
     this.id = identity.fromSeed(Buffer.from(saved.seed, 'hex'))
     this.x = identity.xFromSeed(Buffer.from(saved.xseed, 'hex'))
     this.xpub = this.x.publicRaw.toString('base64')
@@ -241,8 +249,23 @@ class P2PNode extends EventEmitter {
 
   // ---------- Op oluşturma ve doğrulama ----------
 
+  // Ağın ortak saati: bilgisayarın saati yanlışsa eşlerin saatine göre düzeltilir
+  now () { return Date.now() + this.clockFix }
+
+  _updateClock () {
+    const offs = [...this.peers.values()].map(p => p.offset).filter(Number.isFinite).sort((a, b) => a - b)
+    // Tek bir eşe bakarak kimin saatinin yanlış olduğu bilinemez; en az iki eş gerekir
+    if (offs.length < 2) return
+    const med = offs[offs.length >> 1]
+    const fix = Math.abs(med) > 60000 ? Math.round(med) : 0
+    if (Math.abs(fix - this.clockFix) > 30000 || (fix === 0) !== (this.clockFix === 0)) {
+      this.clockFix = fix
+      this.emit('clock', { offset: fix })
+    }
+  }
+
   _createOp (scope, type, data) {
-    const ts = Math.max(Date.now(), this._lastTs + 1)
+    const ts = Math.max(this.now(), this._lastTs + 1)
     this._lastTs = ts
     const op = { type, server: scope, author: this.me, ts, data: data ?? null }
     op.id = opId(op)
@@ -254,7 +277,7 @@ class P2PNode extends EventEmitter {
     if (!op || typeof op !== 'object') return null
     if (!types.has(op.type)) return null
     if (typeof op.author !== 'string' || !HEX64.test(op.author)) return null
-    if (!Number.isFinite(op.ts) || op.ts > Date.now() + 10 * 60 * 1000) return null
+    if (!Number.isFinite(op.ts) || op.ts > this.now() + 30 * 60 * 1000) return null
     if (typeof op.sig !== 'string' || typeof op.id !== 'string') return null
     if (op.type === 'genesis') { if (op.server !== '') return null } else if (op.server !== scope) return null
     const clean = { type: op.type, server: op.server, author: op.author, ts: op.ts, data: op.data ?? null }
@@ -563,7 +586,7 @@ class P2PNode extends EventEmitter {
         }
       }
       return {
-        id: m.id, channel: m.channel, author: m.author, ts: m.ts, text: m.text, attachments: m.attachments,
+        id: m.id, channel: m.channel, author: m.author, ts: m.ts, text: m.text, attachments: m.attachments, files: m.files || [],
         replyTo: m.replyTo, edited: m.edited, reactions: m.reactions, bot: m.bot, poll, reply, locked: !!m.locked
       }
     })
@@ -717,7 +740,7 @@ class P2PNode extends EventEmitter {
         since: st.since,
         lastTs: last ? last.ts : 0,
         lastAuthor: last ? last.author : null,
-        lastText: last ? (last.text.slice(0, 80) || (last.attachments.length ? '📷 Resim' : '')) : '',
+        lastText: last ? (last.text.slice(0, 80) || (last.attachments.length ? '📷 Resim' : last.files?.length ? '📎 ' + last.files[0].name : '')) : '',
         friendTs: st.lastFriendOp || 0,
         profile: this._profileOf(key),
         online: this.isOnline(key)
@@ -748,7 +771,8 @@ class P2PNode extends EventEmitter {
       ops: ops.map(o => ({
         id: o.id, type: o.type, author: o.author, ts: o.ts,
         text: o.type === 'dm' && o.data ? String(o.data.text || '').slice(0, 200) : undefined,
-        hasImage: o.type === 'dm' && Array.isArray(o.data?.attachments) && o.data.attachments.length > 0
+        hasImage: o.type === 'dm' && Array.isArray(o.data?.attachments) && o.data.attachments.length > 0,
+        hasFile: o.type === 'dm' && Array.isArray(o.data?.files) && o.data.files.length > 0
       }))
     })
   }
@@ -788,7 +812,7 @@ class P2PNode extends EventEmitter {
 
   sendEph (serverId, kind, data) {
     if (!this.servers.has(serverId)) return
-    const m = { t: 'eph', s: serverId, from: this.me, k: String(kind), d: data ?? null, n: crypto.randomBytes(9).toString('hex'), at: Date.now(), ttl: 2 }
+    const m = { t: 'eph', s: serverId, from: this.me, k: String(kind), d: data ?? null, n: crypto.randomBytes(9).toString('hex'), at: this.now(), ttl: 2 }
     m.sig = this._signObj([m.s, m.from, m.k, m.d, m.n, m.at])
     this._markSeen(m.n)
     for (const p of this.peers.values()) if (p.shared.has(serverId)) p.send(m)
@@ -796,7 +820,7 @@ class P2PNode extends EventEmitter {
 
   sendSignal (to, data) {
     if (!HEX64.test(to)) return
-    const m = { t: 'sig', to, from: this.me, d: data ?? null, n: crypto.randomBytes(9).toString('hex'), at: Date.now(), ttl: 2 }
+    const m = { t: 'sig', to, from: this.me, d: data ?? null, n: crypto.randomBytes(9).toString('hex'), at: this.now(), ttl: 2 }
     m.sig = this._signObj([m.to, m.from, m.d, m.n, m.at])
     this._markSeen(m.n)
     const direct = this.peers.get(to)
@@ -925,12 +949,14 @@ class P2PNode extends EventEmitter {
   }
 
   _sendHello (peer, reply) {
-    peer.send({ t: 'hello', v: 2, reply, tags: this._tags(peer).map(x => x.tag) })
+    peer.send({ t: 'hello', v: 2, reply, now: Date.now(), tags: this._tags(peer).map(x => x.tag) })
   }
 
   _rehelloAll () { for (const p of this.peers.values()) this._sendHello(p, false) }
 
   _onHello (peer, m) {
+    // Saat farkı (ağ gecikmesi önemsiz: dakikalık hataları arıyoruz)
+    if (Number.isFinite(m.now)) { peer.offset = m.now - Date.now(); this._updateClock() }
     const theirs = new Set(Array.isArray(m.tags) ? m.tags : [])
     const before = peer.shared
     const next = new Set()
@@ -1049,6 +1075,10 @@ class P2PNode extends EventEmitter {
         return
       case 'eph': return this._onEph(peer, m)
       case 'sig': return this._onSig(peer, m)
+      case 'au': return this._onAudio(peer, m)
+      case 'fq': return this._onFileReq(peer, m)
+      case 'fd': { const d = this.downloads.get(m.id); if (d) d.onData(peer, m); return }
+      case 'fe': { const d = this.downloads.get(m.id); if (d) d.onError(peer); return }
     }
   }
 
@@ -1088,6 +1118,7 @@ class P2PNode extends EventEmitter {
           channel: m ? m.channel : o.data && typeof o.data.channel === 'string' ? o.data.channel : null,
           text: o.type === 'message' ? String((m ? m.text : o.data?.text) || '').slice(0, 300) : undefined,
           hasImage: o.type === 'message' && (m ? m.attachments.length > 0 : Array.isArray(o.data?.attachments) && o.data.attachments.length > 0),
+          hasFile: o.type === 'message' && (m ? (m.files || []).length > 0 : Array.isArray(o.data?.files) && o.data.files.length > 0),
           locked: !!m?.locked
         }
       })
@@ -1100,12 +1131,13 @@ class P2PNode extends EventEmitter {
     if (typeof m.n !== 'string' || this.seen.has(m.n)) return
     this._markSeen(m.n)
     if (!peer.shared.has(m.s) || typeof m.from !== 'string' || !HEX64.test(m.from) || m.from === this.me) return
-    if (!Number.isFinite(m.at) || Math.abs(Date.now() - m.at) > 90000) return
+    if (!Number.isFinite(m.at) || Math.abs(this.now() - m.at) > EPH_WINDOW) return
     if (!this._verifyObj([m.s, m.from, m.k, m.d, m.n, m.at], m.sig, m.from)) return
     const st = this.servers.get(m.s)?.state
     if (st && st.banned.has(m.from)) return
     if (!this.presence.has(m.s)) this.presence.set(m.s, new Map())
     const pres = this.presence.get(m.s)
+    if (peer.key !== m.from) this.routes.set(m.from, peer.key)
     const wasOnline = pres.has(m.from) && Date.now() - pres.get(m.from) < ONLINE_TTL
     pres.set(m.from, Date.now())
     if (!wasOnline) this.emit('peers', [m.s])
@@ -1122,7 +1154,8 @@ class P2PNode extends EventEmitter {
     if (typeof m.n !== 'string' || this.seen.has(m.n)) return
     this._markSeen(m.n)
     if (typeof m.from !== 'string' || !HEX64.test(m.from) || typeof m.to !== 'string') return
-    if (!Number.isFinite(m.at) || Math.abs(Date.now() - m.at) > 90000) return
+    if (!Number.isFinite(m.at) || Math.abs(this.now() - m.at) > EPH_WINDOW) return
+    if (peer.key !== m.from) this.routes.set(m.from, peer.key)
     if (m.to === this.me) {
       if (!this._verifyObj([m.to, m.from, m.d, m.n, m.at], m.sig, m.from)) return
       if (this.blocked.has(m.from)) return
@@ -1138,6 +1171,115 @@ class P2PNode extends EventEmitter {
       }
     }
   }
+
+  // ---------- Aktarmalı ses (doğrudan WebRTC bağlantısı kurulamadığında) ----------
+  // Ses, Opus olarak sıkıştırılmış küçük paketler halinde P2P bağlantısı üzerinden gider.
+  // Doğrudan bağlantı yoksa, iki tarafa da bağlı ortak bir üye paketi yalnızca hedefe iletir.
+
+  sendAudio (to, pkt) {
+    if (!HEX64.test(to) || !pkt || typeof pkt.d !== 'string' || pkt.d.length > 4000) return
+    const m = { t: 'au', to, from: this.me, q: pkt.q | 0, d: pkt.d, r: pkt.r | 0, c: pkt.c | 0, at: this.now(), ttl: 1 }
+    const direct = this.peers.get(to)
+    if (direct) return direct.send(m)
+    m.sig = this._signObj([m.to, m.from, m.q, m.d, m.at])
+    const via = this.peers.get(this.routes.get(to))
+    if (via) return via.send(m)
+    for (const p of this.peers.values()) if (p.shared.size) p.send(m)
+  }
+
+  _onAudio (peer, m) {
+    if (typeof m.to !== 'string' || typeof m.from !== 'string' || !HEX64.test(m.from) || typeof m.d !== 'string' || m.d.length > 4000) return
+    if (m.to === this.me) {
+      if (m.from === this.me || this.blocked.has(m.from)) return
+      // Doğrudan gelen paket bağlantının kendisiyle doğrulanmıştır; aktarılan paket imzalı olmalı
+      if (peer.key !== m.from) {
+        if (!Number.isFinite(m.at) || Math.abs(this.now() - m.at) > EPH_WINDOW) return
+        if (!this._verifyObj([m.to, m.from, m.q, m.d, m.at], m.sig, m.from)) return
+        this.routes.set(m.from, peer.key)
+      }
+      if (!this.sharesServer(m.from)) return
+      this.emit('audio', { from: m.from, q: m.q, d: m.d, r: m.r, c: m.c })
+    } else if (m.ttl > 0 && peer.shared.size) {
+      const target = this.peers.get(m.to)
+      if (target && target !== peer) target.send({ ...m, ttl: 0 })
+    }
+  }
+
+  // ---------- Dosya paylaşımı ----------
+
+  // ctx: { server, channel } ya da { dm: anahtar }
+  async shareFile (filePath, ctx) {
+    const meta = await this.files.addFromPath(filePath, ctx, FILE_MAX)
+    return meta
+  }
+
+  hasFile (h) { return this.files.has(h) }
+  addFileCtx (h, ctx) { if (HEX64.test(h)) this.files.addCtx(h, ctx) }
+
+  // Bu kişi bu dosyayı alabilir mi? (dosyanın paylaşıldığı kanala/sohbete erişimi olmalı)
+  _mayGetFile (key, h) {
+    const e = this.files.index[h]
+    if (!e) return false
+    for (const c of e.ctx) {
+      if (c.dm) { if (c.dm === key) return true; continue }
+      const st = this.servers.get(c.server)?.state
+      if (st && st.members.has(key) && !st.banned.has(key) && allowedIn(st, c.channel, key)) return true
+    }
+    return false
+  }
+
+  _onFileReq (peer, m) {
+    if (typeof m.id !== 'string' || typeof m.h !== 'string' || !HEX64.test(m.h)) return
+    if (!this.files.has(m.h) || !this._mayGetFile(peer.key, m.h)) return peer.send({ t: 'fe', id: m.id })
+    const size = this.files.index[m.h].size
+    const o = Number(m.o)
+    const n = Math.min(Number(m.n) || 0, 256 * 1024)
+    if (!Number.isSafeInteger(o) || o < 0 || o >= size || n <= 0) return peer.send({ t: 'fe', id: m.id })
+    const len = Math.min(n, size - o)
+    fs.open(this.files.path(m.h), 'r', (err, fd) => {
+      if (err) return peer.send({ t: 'fe', id: m.id })
+      const buf = Buffer.alloc(len)
+      fs.read(fd, buf, 0, len, o, (e2, got) => {
+        fs.close(fd, () => {})
+        if (e2 || got !== len) return peer.send({ t: 'fe', id: m.id })
+        peer.send({ t: 'fd', id: m.id, o, d: buf.toString('base64') })
+      })
+    })
+  }
+
+  // file: { h, name, size }  ctx: { server, channel } | { dm }  author: paylaşan
+  downloadFile (file, ctx, author, dest) {
+    if (!file || !HEX64.test(file.h) || !Number.isSafeInteger(file.size)) throw new Error('Geçersiz dosya')
+    // Önce paylaşan kişi, sonra aynı kanaldaki diğer çevrim içi eşler (dosyayı indirmiş olabilirler)
+    const sources = []
+    if (author && author !== this.me) sources.push(author)
+    if (ctx.dm) { if (!sources.includes(ctx.dm)) sources.push(ctx.dm) } else {
+      for (const p of this.peers.values()) if (p.shared.has(ctx.server) && !sources.includes(p.key)) sources.push(p.key)
+    }
+    if (author && author !== this.me) this.wantPeer(author, 'file', true)
+    const job = new Download(this, this.files, file, ctx, sources, dest)
+    this.downloads.set(job.id, job)
+    if (this.files.has(file.h)) {
+      // Zaten bizde: doğrudan kopyala
+      this.downloads.delete(job.id)
+      clearInterval(job.timer)
+      try { fs.closeSync(job.fd); fs.rmSync(job.tmp, { force: true }) } catch {}
+      this.files.addCtx(file.h, ctx)
+      fs.promises.copyFile(this.files.path(file.h), dest)
+        .then(() => this.emit('file-progress', { job: job.id, h: file.h, got: file.size, total: file.size, done: true, path: dest }))
+        .catch(e => this.emit('file-progress', { job: job.id, h: file.h, error: e.message }))
+      return job.id
+    }
+    setTimeout(() => job.start(), 0)
+    // Paylaşanla doğrudan bağlantı biraz sonra kurulabilir; kaynak listesini tazele
+    const refresh = setInterval(() => {
+      if (job.done) { clearInterval(refresh); if (author) this.wantPeer(author, 'file', false); return }
+      for (const p of this.peers.values()) if ((ctx.dm ? p.key === ctx.dm : p.shared.has(ctx.server)) && !job.sources.includes(p.key)) job.sources.push(p.key)
+    }, 3000)
+    return job.id
+  }
+
+  cancelDownload (id) { this.downloads.get(id)?.cancel() }
 
   // Bekleyen katılımlar için davetimizi bağlı eşlere sun (sunucuyu tanımayanlar yok sayar)
   _offerInvites (only = null) {
@@ -1157,7 +1299,7 @@ class P2PNode extends EventEmitter {
     for (const id of this.servers.keys()) this.sendEph(id, 'presence', { act: this.activity })
     for (const p of this.peers.values()) if (this.dms.has(p.key)) p.send({ t: 'act', d: this.activity })
     const now = Date.now()
-    for (const [n, t] of this.seen) if (now - t > 180000) this.seen.delete(n)
+    for (const [n, t] of this.seen) if (now - t > EPH_WINDOW * 2) this.seen.delete(n)
     for (const [k, q] of this.sigQueue) {
       while (q.length && now - q[0].at > SIG_QUEUE_MS) q.shift()
       if (!q.length) this.sigQueue.delete(k)

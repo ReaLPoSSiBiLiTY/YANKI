@@ -6,6 +6,7 @@
    BOT_DEFS, botAvatar, botsIn, botEnabledIn, welcomeText, renderBotReply, renderPoll, renderCmdHints, handleMusicCommand, musicAdd, musicSkip, musicStop, MusicPlayer, openMusicPanel, openBotsModal, openBotCard,
    friendOf, friendStatusOf, isOnline, dmUnread, incomingCount, homeBadge, refreshDMs, renderHomeSidebar, renderHome, homeTabsHTML, activeNowHTML, dmProfileHTML, activityBlock, friendButton, renderDMComposer, friendAction, sendFriendCode, friendMoreMenu,
    throttleRaf, isLight, plainText, mentionsToNames, namesToMentions, mentionMap, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator,
+   stageFiles, stagedFilesHTML, takeStagedFiles, filesHTML, updateFileCards, downloadFileFrom, onFileProgress, openLink, fmtSize,
    GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, openMiniDM,
    startDM, closeMiniDM, bindMiniDM, miniOnDM, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew */
 
@@ -25,6 +26,7 @@ async function init () {
   S.servers = r.servers
   S.platform = r.platform
   S.version = r.version || ''
+  if (r.clock) setTimeout(() => clockWarn(r.clock), 3000)
   S.canCreate = await api.canCreateServer?.().catch(() => false)
   document.body.classList.add('os-' + r.platform)
   api.setCloseToTray?.(settings.closeToTray !== false)
@@ -131,6 +133,18 @@ async function onEvent (ev) {
     case 'signal':
       voice.onSignal(ev.from, ev.data)
       break
+    case 'audio':
+      voice.relay?.onPacket(ev.from, ev)
+      break
+    case 'file-progress':
+      onFileProgress(ev)
+      break
+    case 'open-link':
+      openLink(ev.url)
+      break
+    case 'clock':
+      clockWarn(ev.offset)
+      break
     case 'dm': {
       await refreshDMs()
       const miniSeen = ev.ops.some(o => o.type === 'dm' && o.author !== S.me) && miniOnDM(ev.peer)
@@ -141,7 +155,7 @@ async function onEvent (ev) {
         if (o.type === 'dm') {
           clearTyping('dm:' + ev.peer, ev.peer)
           const visible = (document.hasFocus() && S.mode === 'home' && S.dm === ev.peer) || miniSeen
-          if (!visible && settings.notify !== 'none') { notifyRaw(nameOf(ev.peer), plainText(o.text) || (o.hasImage ? '📷 Resim' : '')); if (settings.sounds) voice.sound('message') }
+          if (!visible && settings.notify !== 'none') { notifyRaw(nameOf(ev.peer), plainText(o.text) || (o.hasImage ? '📷 Resim' : o.hasFile ? '📎 Dosya' : '')); if (settings.sounds) voice.sound('message') }
         }
       }
       if (S.mode === 'home' && S.dm === ev.peer) reloadMessages('cur')
@@ -196,7 +210,7 @@ function maybeNotify (serverId, o) {
   if (Date.now() - o.ts > 600000) return // eşitlenen eski mesajlar için bildirim yok
   if (settings.notify === 'none' || (settings.notify === 'mentions' && !mention)) return
   const ch = meta?.channels?.find(c => c.id === o.channel)
-  api.notify(`${mention ? '📣 ' : ''}${nameOf(o.author)}${ch ? ' · #' + ch.name : ''}`, plainText(o.text) || (o.hasImage ? '📷 Resim' : o.locked ? '🔒 Şifreli mesaj' : ''))
+  api.notify(`${mention ? '📣 ' : ''}${nameOf(o.author)}${ch ? ' · #' + ch.name : ''}`, plainText(o.text) || (o.hasImage ? '📷 Resim' : o.hasFile ? '📎 Dosya' : o.locked ? '🔒 Şifreli mesaj' : ''))
   if (settings.sounds) voice.sound('message')
 }
 
@@ -529,10 +543,11 @@ function renderVoiceInSidebar () {
 // Ses kartı, kullanıcı kartı, sahne kontrol çubuğu
 // =====================================================================
 function voiceStatus () {
-  const peers = [...voice.peers.values()]
-  const bad = peers.some(p => ['failed', 'disconnected'].includes(p.pc.connectionState))
-  const connecting = peers.some(p => ['new', 'connecting'].includes(p.pc.connectionState))
-  return bad ? ['bad', 'Bağlantı onarılıyor…'] : connecting ? ['warn', 'Bağlanıyor…'] : ['ok', 'Bağlandı']
+  const states = [...voice.peers.keys()].map(k => voice.peerState(k))
+  const bad = states.some(s => ['failed', 'disconnected'].includes(s))
+  const connecting = states.some(s => ['new', 'connecting'].includes(s))
+  const relay = states.includes('relay')
+  return bad ? ['bad', 'Bağlantı onarılıyor…'] : connecting ? ['warn', 'Bağlanıyor…'] : relay ? ['warn', 'Bağlandı (aktarmalı ses)'] : ['ok', 'Bağlandı']
 }
 
 function renderVoiceCard () {
@@ -731,6 +746,7 @@ function renderMessages (forceBottom = false) {
             ${grouped ? '' : `<div class="msg-head"><button class="msg-name" data-act="user" data-key="${x.author}" ${color ? `style="color:${color}"` : ''}>${esc(nameOf(x.author))}</button>${mem?.owner ? `<span class="tag owner" title="Sunucu sahibi">${icon('crown', 12)}</span>` : mem?.admin ? `<span class="tag admin" title="Yönetici">${icon('shield', 12)}</span>` : ''}<span class="msg-time">${esc(fmtTime(x.ts))}</span>${pins.has(x.id) ? `<span class="pinned">${icon('pin', 12)}</span>` : ''}</div>`}
             ${x.locked ? `<div class="msg-text locked">${icon('lock', 14)} Şifreli mesaj — bu kanalın anahtarı sana henüz ulaşmadı.</div>` : x.poll ? renderPoll(x) : x.text ? `<div class="msg-text ${x.bot ? 'cmd-text' : ''}">${md(x.text)}${x.edited ? '<span class="edited">(düzenlendi)</span>' : ''}</div>` : ''}
             ${renderBotReply(x)}
+            ${filesHTML(x)}
             ${x.attachments.length ? `<div class="atts n${Math.min(x.attachments.length, 4)}">${x.attachments.map(a => safeImg(a.data) ? `<img class="att-img" src="${a.data}" alt="${esc(a.name)}" data-act="lightbox" loading="lazy">` : '').join('')}</div>` : ''}
             ${x.poll ? '' : messageEmbeds(x)}
             ${reactions.length ? `<div class="reactions">${reactions.map(([e, users]) => `<button class="react ${users.includes(S.me) ? 'mine' : ''}" data-act="react" data-id="${x.id}" data-emoji="${esc(e)}" title="${esc(users.map(u => nameOf(u)).join(', '))}">${esc(e)} <b>${users.length}</b></button>`).join('')}<button class="react add" data-act="react-pick" data-id="${x.id}">${icon('smile', 15)}</button></div>` : ''}
@@ -829,7 +845,7 @@ function renderComposerState () {
     rb.hidden = true
   }
   $('#attach-preview').innerHTML = S.attachments.map((a, i) => `
-    <div class="ap-item"><img src="${a.data}" alt=""><button data-act="remove-att" data-i="${i}" title="Kaldır">${icon('x', 14)}</button><span>${esc(a.name)}</span></div>`).join('')
+    <div class="ap-item"><img src="${a.data}" alt=""><button data-act="remove-att" data-i="${i}" title="Kaldır">${icon('x', 14)}</button><span>${esc(a.name)}</span></div>`).join('') + stagedFilesHTML()
 }
 
 function autoGrow () {
@@ -861,8 +877,8 @@ async function send () {
       if (text.trim()) await postCtx('message-edit', { target: S.editing, text: namesToMentions(text) })
       S.editing = null
     } else {
-      if (!text.trim() && !S.attachments.length) return
-      if (c.kind === 'channel' && !S.attachments.length && await handleMusicCommand(text)) {
+      if (!text.trim() && !S.attachments.length && !S.files.length) return
+      if (c.kind === 'channel' && !S.attachments.length && !S.files.length && await handleMusicCommand(text)) {
         input.value = ''
         autoGrow()
         renderCmdHints()
@@ -870,9 +886,11 @@ async function send () {
       }
       const size = S.attachments.reduce((n, a) => n + a.data.length, 0)
       if (size > 10.5 * 1024 * 1024) { toast('Ekler çok büyük (toplam en fazla ~7 MB).'); return }
-      await postCtx('message', { text: namesToMentions(text), attachments: S.attachments, replyTo: S.reply })
+      const files = S.files.length ? await takeStagedFiles() : undefined
+      await postCtx('message', { text: namesToMentions(text), attachments: S.attachments, files, replyTo: S.reply })
       S.reply = null
       S.attachments = []
+      S.files = []
     }
   } catch (e) {
     toast('Gönderilemedi: ' + String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
@@ -899,9 +917,21 @@ function wrapSelection (mark) {
   autoGrow()
 }
 
+// Bilgisayarın saati yanlışsa bir kez uyar (YANKI farkı kendisi telafi ediyor)
+let clockWarned = false
+function clockWarn (offset) {
+  if (clockWarned || !offset || Math.abs(offset) < 120000) return
+  clockWarned = true
+  const min = Math.round(Math.abs(offset) / 60000)
+  toast(`Bilgisayarının saati yaklaşık ${min} dakika ${offset > 0 ? 'geri' : 'ileri'}. YANKI bunu otomatik telafi ediyor, ama saat ayarlarından "saati otomatik ayarla"yı açmanı öneririz.`, 10000)
+}
+
 async function addFiles (files) {
+  // Resimler (25 MB'a kadar) sohbette önizlemeli gider; diğer her şey dosya olarak paylaşılır
+  const asFiles = files.filter(f => !/^image\/(png|jpe?g|gif|webp|bmp)$/.test(f.type) || f.size > 25 * 1024 * 1024)
+  files = files.filter(f => !asFiles.includes(f))
+  if (asFiles.length) stageFiles(asFiles)
   for (const f of files) {
-    if (!f.type.startsWith('image/')) { toast('Şimdilik yalnızca resim paylaşılabilir.'); continue }
     if (S.attachments.length >= 6) { toast('En fazla 6 resim.'); break }
     try {
       let data
@@ -1016,8 +1046,8 @@ function updateTile (div, t, big, parts) {
     const pr = profileOf(t.key)
     sig = ['av', t.key, big, act ? actText(act) : '', t.conn || '', pr?.avatar?.length || 0, pr?.banner?.length || 0].join('|')
     if (media._sig !== sig) {
-      const bad = t.conn && t.conn !== 'connected'
-      media.innerHTML = `<div class="tile-av">${avatar(t.key, big ? 120 : 86)}</div>${act ? `<div class="tile-act">${actIcon(act, 16)}<span class="ellipsis">${esc(actText(act))}</span></div>` : ''}${bad ? `<div class="tile-conn">${t.conn === 'failed' || t.conn === 'disconnected' ? 'Bağlantı onarılıyor…' : 'Bağlanıyor…'}<button class="btn small" data-act="peer-reconnect" data-key="${t.key}">${icon('signal', 14)} Yeniden bağlan</button></div>` : ''}`
+      const bad = t.conn && t.conn !== 'connected' && t.conn !== 'relay'
+      media.innerHTML = `<div class="tile-av">${avatar(t.key, big ? 120 : 86)}</div>${act ? `<div class="tile-act">${actIcon(act, 16)}<span class="ellipsis">${esc(actText(act))}</span></div>` : ''}${t.conn === 'relay' ? `<div class="tile-relay" title="Doğrudan bağlantı kurulamadı; ses YANKI ağı üzerinden aktarılıyor. Görüntü ve yayın bu kişiyle paylaşılamaz.">${icon('signal', 13)} Aktarmalı ses</div>` : ''}${bad ? `<div class="tile-conn">${t.conn === 'failed' || t.conn === 'disconnected' ? 'Bağlantı onarılıyor…' : 'Bağlanıyor…'}<button class="btn small" data-act="peer-reconnect" data-key="${t.key}">${icon('signal', 14)} Yeniden bağlan</button></div>` : ''}`
       if (pr?.banner && safeImg(pr.banner)) div.style.setProperty('--tile-bg', `url(${pr.banner})`); else div.style.removeProperty('--tile-bg')
       div.style.setProperty('--tile-accent', pr?.color || hashColor(t.key))
     }
@@ -1032,8 +1062,11 @@ function updateTile (div, t, big, parts) {
     if (media._sig !== sig || v.parentNode !== media) { media.replaceChildren(v); v.play().catch(() => {}) }
     v.classList.toggle('mirror', !!(t.self && t.kind === 'cam'))
   } else {
-    sig = 'wait|' + t.id
-    if (media._sig !== sig) media.innerHTML = '<div class="tile-conn"><div class="spinner small"></div> Görüntü bekleniyor…</div>'
+    const relayed = !t.self && voice.peerState(t.key) === 'relay'
+    sig = 'wait|' + t.id + '|' + relayed
+    if (media._sig !== sig) media.innerHTML = relayed
+      ? `<div class="tile-conn">Bu kişiyle doğrudan bağlantı kurulamadı; görüntü gelemiyor (ses aktarılıyor).<button class="btn small" data-act="peer-reconnect" data-key="${t.key}">${icon('signal', 14)} Yeniden dene</button></div>`
+      : '<div class="tile-conn"><div class="spinner small"></div> Görüntü bekleniyor…</div>'
   }
   media._sig = sig
 }
@@ -1676,13 +1709,17 @@ async function openSettings (tab = 'profile') {
           <h4>Bağlantı önizlemeleri</h4>
           <label class="check"><input type="checkbox" id="net-prev" ${settings.linkPreviews ? 'checked' : ''}> Paylaşılan bağlantıların başlık/görsel önizlemesini getir</label>
           <p class="muted small">Önizleme, bağlantıyı senin bilgisayarının indirmesiyle oluşturulur (IP adresin o siteye görünür).</p>
+          <h4>Güvenilen siteler</h4>
+          <p class="muted small">Dış bağlantı uyarısında "bir daha sorma" dediğin siteler: ${(settings.trustedHosts || []).length ? esc(settings.trustedHosts.join(', ')) : 'yok'}.</p>
+          ${(settings.trustedHosts || []).length ? '<button class="btn small" id="net-trust">Listeyi temizle</button>' : ''}
           <h4>TURN sunucusu (isteğe bağlı)</h4>
-          <p class="muted small">Çok katı NAT/kurumsal güvenlik duvarı arkasındaki kullanıcılar arasında ses/görüntü kurulamazsa kendi TURN aktarıcını (ör. coturn) girebilirsin. Normalde gerekmez.</p>
+          <p class="muted small">Doğrudan bağlantı kurulamayan kişiler arasında ses, YANKI ağı üzerinden kendiliğinden aktarılır; ancak görüntü ve yayın için doğrudan bağlantı gerekir. Bunlar da çalışmazsa kendi TURN aktarıcını (ör. coturn) girebilirsin. Normalde gerekmez.</p>
           <label>TURN adresi<input id="net-turn" placeholder="turn:alan.adi:3478" value="${esc(settings.turnUrl)}"></label>
           <div class="row gap"><label class="grow">Kullanıcı<input id="net-tu" value="${esc(settings.turnUser)}"></label><label class="grow">Parola<input id="net-tp" type="password" value="${esc(settings.turnPass)}"></label></div>
           <button class="btn small primary" id="net-save">Kaydet</button>
         </div>`
       $('#net-copy', pane).addEventListener('click', () => copyText('yanki://arkadas/' + S.me, 'Arkadaş kodun kopyalandı'))
+      $('#net-trust', pane)?.addEventListener('click', () => { settings.trustedHosts = []; saveSettings(); show('net'); toast('Güvenilen siteler temizlendi.') })
       $('#net-prev', pane).addEventListener('change', e => { settings.linkPreviews = e.target.checked; saveSettings(); renderMessages() })
       $('#net-save', pane).addEventListener('click', () => { settings.turnUrl = $('#net-turn', pane).value.trim(); settings.turnUser = $('#net-tu', pane).value; settings.turnPass = $('#net-tp', pane).value; saveSettings(); toast('Kaydedildi — sonraki ses bağlantısında geçerli.') })
     } else if (k === 'about') {
@@ -1763,7 +1800,7 @@ function pinsPopup (anchor) {
 function lightbox (src) {
   const node = el(`<div class="lightbox"><img src="${esc(src)}" alt=""><div class="lb-actions"><button class="btn small" data-open>Tarayıcıda aç</button></div></div>`)
   node.addEventListener('click', (e) => {
-    if (e.target.closest('[data-open]') && /^https?:/.test(src)) api.openExternal(src)
+    if (e.target.closest('[data-open]') && /^https?:/.test(src)) openLink(src)
     node.remove()
   })
   document.body.appendChild(node)
@@ -1801,7 +1838,7 @@ function bindStatic () {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i') { e.preventDefault(); wrapSelection('*') }
   })
   input.addEventListener('paste', (e) => {
-    const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'))
+    const files = [...(e.clipboardData?.files || [])]
     if (files.length) { e.preventDefault(); addFiles(files) }
   })
 
@@ -1953,7 +1990,7 @@ async function onClick (e) {
     case 'peer-reconnect': e.stopPropagation(); voice.reconnect(key); toast('Bağlantı yeniden kuruluyor…', 2000); break
     case 'update': openUpdateModal(); break
     case 'pins': pinsPopup(a); break
-    case 'open-link': e.preventDefault(); api.openExternal(a.dataset.url); break
+    case 'open-link': e.preventDefault(); openLink(a.dataset.url); break
     case 'spoiler': a.classList.add('revealed'); break
     case 'lightbox': lightbox(a.getAttribute('src')); break
     case 'cmd-fill': { const t = $('#input'); t.value = a.dataset.cmd; t.focus(); renderCmdHints(); autoGrow(); break }
@@ -1998,6 +2035,10 @@ async function onClick (e) {
       break
     }
     case 'remove-att': S.attachments.splice(+a.dataset.i, 1); renderComposerState(); break
+    case 'remove-file': S.files.splice(+a.dataset.i, 1); renderComposerState(); break
+    case 'file-dl': e.stopPropagation(); downloadFileFrom(a); break
+    case 'file-cancel': { e.stopPropagation(); const d = S.dl[a.dataset.h]; if (d) api.cancelDownload(d.job); break }
+    case 'file-show': { e.stopPropagation(); const d = S.dl[a.dataset.h]; if (d?.path) api.showFile(d.path); break }
   }
 }
 

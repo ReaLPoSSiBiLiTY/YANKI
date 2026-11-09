@@ -3,6 +3,18 @@
 // (scripts/release-notes.js) bu listeden üretilir. Yeni sürümde en üste ekle.
 const CHANGELOG = [
   {
+    version: '1.4.0',
+    date: '2026-11-09',
+    title: 'Dosya paylaşımı ve daha sağlam ses',
+    items: [
+      { icon: 'paperclip', title: 'Dosya paylaşımı', desc: 'Ataç düğmesiyle, sürükle-bırakla ya da yapıştırarak 2 GB\'a kadar her türlü dosyayı paylaş. Dosya sunucuya değil, doğrudan paylaşan kişiden (ya da onu indirmiş bir üyeden) parça parça gelir ve bütünlüğü doğrulanır. Yalnızca o kanala erişimi olanlar indirebilir.' },
+      { icon: 'signal', title: 'Duyulamama sorunu giderildi', desc: 'Doğrudan bağlantı kurulamayan kişiler arasında ses artık YANKI ağı üzerinden aktarılıyor ("Aktarmalı ses"). Bilgisayar saati yanlış olan kullanıcıların hiç duyulamaması düzeltildi; YANKI saat farkını kendisi telafi ediyor.' },
+      { icon: 'activity', title: 'Daha az gir-çık', desc: 'Kısa ağ dalgalanmalarında bağlantı hemen kopartılmıyor; kişiler sesli kanaldan kendiliğinden düşüp geri gelmiyor.' },
+      { icon: 'screen', title: 'Yayından düşme düzeltildi', desc: 'Bağlantı yenilendiğinde ya da durum bilgisi geç geldiğinde izleyici artık yayından atılmıyor; yayın kendiliğinden geri geliyor.' },
+      { icon: 'shield', title: 'Güvenlik uyarıları', desc: 'Bağlantılar açılmadan önce hangi siteye gidileceği gösteriliyor. Dosyalar indirilmeden önce uyarı çıkıyor; program ve betik dosyalarında (.exe, .bat, .dmg…) ayrıca kırmızı uyarı var.' }
+    ]
+  },
+  {
     version: '1.3.0',
     date: '2026-10-26',
     title: 'Davetle kullanım, grup simgeleri ve arka planda çalışma',

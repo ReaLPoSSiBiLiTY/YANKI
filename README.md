@@ -46,6 +46,14 @@ Topluluğun yalnızca üyelerinin bilgisayarlarında yaşar; herkes birbirine do
   </tr>
 </table>
 
+## v1.4'te yenilikler
+
+- **Dosya paylaşımı:** 2 GB'a kadar her türlü dosya. İçerik merkezi bir yere yüklenmez; indiren kişi dosyayı doğrudan paylaşandan (ya da onu daha önce indirmiş bir üyeden) parça parça alır ve SHA-256 özetiyle doğrular. Dosyayı yalnızca paylaşıldığı kanala ya da özel sohbete erişimi olanlar indirebilir.
+- **Aktarmalı ses:** İki kişi arasında doğrudan WebRTC bağlantısı kurulamıyorsa (operatör NAT'ı, mobil paylaşım vb.) ses Opus ile sıkıştırılıp YANKI'nın P2P ağı üzerinden, gerekirse ortak bir üye aracılığıyla (imzalı paketlerle) aktarılır.
+- **Saat farkı düzeltmesi:** Saati yanlış bilgisayarlardaki kullanıcıların mesaj ve ses sinyalleri reddediliyordu; artık eşlerin ortak saatine göre düzeltiliyor.
+- **Yayın ve bağlantı kararlılığı:** Kurulmuş bağlantılar kısa kopmalarda hemen sıfırlanmıyor; yayın izleme isteği bağlantı yenilense de korunuyor.
+- **Güvenlik uyarıları:** Dış bağlantılar ve dosya indirmeleri öncesi uyarı.
+
 ## v1.3'te yenilikler
 
 - **Yalnızca davetle kullanım:** YANKI'yı indiren biri, bir sunucu yöneticisinden davet kodu almadan uygulamayı kullanamaz. Davetler süreli ve sınırlı kullanımlıdır, iptal edilebilir (Sunucu menüsü › Davet et). Eski kalıcı kodlar çalışmaz; yeni sunucuyu yalnızca mevcut yöneticiler açabilir.
@@ -92,8 +100,8 @@ npm run start:2   # aynı bilgisayarda ikinci bir kullanıcıyla denemek için
 ## Kurulum dosyası üretme
 
 ```bash
-npm run dist:win   # Windows'ta → dist/YANKI-1.3.0-win-x64.exe ve kurulumsuz .zip
-npm run dist:mac   # macOS'ta  → dist/YANKI-1.3.0-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
+npm run dist:win   # Windows'ta → dist/YANKI-1.4.0-win-x64.exe ve kurulumsuz .zip
+npm run dist:mac   # macOS'ta  → dist/YANKI-1.4.0-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
 ```
 
 İki platformu birden derlemek için `v1.2.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derler, sürüm notlarını `renderer/changelog.js`'ten üretir ve Releases sayfasında yayınlar. Uygulamalar güncellemeyi bu sayfadan alır.

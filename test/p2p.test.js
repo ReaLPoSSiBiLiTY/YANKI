@@ -5,6 +5,7 @@ const assert = require('assert')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const crypto = require('crypto')
 const { EventEmitter } = require('events')
 const { P2PNode } = require('../src/p2p/node')
 const { musicState, rollDice } = require('../src/p2p/state')
@@ -307,6 +308,42 @@ async function main () {
   await until(() => A.friendStatus(D.me) === 'none', 'arkadaşlıktan çıkarma')
   assert.throws(() => D.dmPost(A.me, 'dm', { text: 'tekrar' }), /arkadaş/i)
 
+  // Dosya paylaşımı: A paylaşır, B indirir (parça parça, özet doğrulamalı); D kanal üyesi değil, alamaz
+  const src = path.join(root, 'rapor.bin')
+  const blob = crypto.randomBytes(700 * 1024 + 123)
+  fs.writeFileSync(src, blob)
+  const fmeta = await A.shareFile(src, { server: sid, channel: genel })
+  assert.strictEqual(fmeta.size, blob.length)
+  A.post(sid, 'message', { channel: genel, text: 'rapor', files: [{ ...fmeta, mime: 'application/octet-stream' }] })
+  await until(() => B.messages(sid, genel).some(m => m.files?.[0]?.h === fmeta.h), 'dosya künyesi eşitlendi')
+  const dest = path.join(root, 'indirilen.bin')
+  let prog = null
+  B.on('file-progress', e => { if (e.done || e.error) prog = e })
+  B.downloadFile(fmeta, { server: sid, channel: genel }, A.me, dest)
+  await until(() => prog, 'dosya indirildi')
+  assert.ok(prog.done, 'indirme hatası: ' + prog.error)
+  assert.ok(fs.readFileSync(dest).equals(blob), 'indirilen dosya aynı')
+  assert.ok(B.hasFile(fmeta.h), 'indiren de önbelleğinde tutar')
+  assert.ok(!A._mayGetFile(D.me, fmeta.h), 'sunucu üyesi olmayan dosyayı alamaz')
+
+  // Aktarmalı ses: A ile C arasında doğrudan bağlantı yok; paket B üzerinden gider ve imzası doğrulanır
+  let au = null
+  C.on('audio', e => { au = e })
+  await until(() => C.routes.get(A.me) === B.me || C.peers.has(A.me), 'C, A\'ya giden yolu öğrendi')
+  A.routes.set(C.me, B.me)
+  A.sendAudio(C.me, { q: 7, d: Buffer.from('opus').toString('base64'), r: 48000, c: 1 })
+  await until(() => au, 'aktarmalı ses paketi')
+  assert.strictEqual(au.from, A.me)
+  assert.strictEqual(au.q, 7)
+
+  // Saat farkı: en az iki eşin ortak saati 5 dk ileriyse kendi saatimizi düzeltiriz
+  const fake = { peers: new Map([['x', { offset: 300000 }], ['y', { offset: 301000 }]]), clockFix: 0, emit () {} }
+  P2PNode.prototype._updateClock.call(fake)
+  assert.ok(Math.abs(fake.clockFix - 300500) <= 1000)
+  fake.peers = new Map([['x', { offset: 2000 }], ['y', { offset: -1000 }]])
+  P2PNode.prototype._updateClock.call(fake)
+  assert.strictEqual(fake.clockFix, 0)
+
   // Yasaklama
   A.post(sid, 'ban', { user: C.me })
   await until(() => B.meta(sid).members.length === 2 && B.meta(sid).banned.length === 1, 'ban')
@@ -319,7 +356,7 @@ async function main () {
   const A2 = new P2PNode(path.join(root, 'ayse'), { swarmFactory: net.factory(), allowCreate: true })
   await A2.start()
   assert.strictEqual(A2.me, A.me)
-  assert.strictEqual(A2.messages(sid, genel).length, 6)
+  assert.strictEqual(A2.messages(sid, genel).length, 7)
   assert.strictEqual(A2.meta(sid).name, 'VAULT')
   assert.strictEqual(A2.dmMessages(D.me).length, 2, 'özel mesajlar diskte kalıcı')
   // Budanan profil kayıtları yeniden başlatmada dosyadan atılır

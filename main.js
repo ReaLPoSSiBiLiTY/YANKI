@@ -1,5 +1,5 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, Notification, systemPreferences, net, Menu, Tray, nativeImage } = require('electron')
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, Notification, systemPreferences, net, Menu, Tray, nativeImage, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { P2PNode } = require('./src/p2p/node')
@@ -111,13 +111,14 @@ function createWindow () {
   win.on('restore', () => vis(false))
   win.on('show', () => vis(false))
 
+  // Dış bağlantılar doğrudan açılmaz: arayüz önce uyarı gösterir
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url)
+    if (/^https?:\/\//i.test(url)) send({ type: 'open-link', url })
     return { action: 'deny' }
   })
   win.webContents.on('will-navigate', (e, url) => {
     e.preventDefault()
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url)
+    if (/^https?:\/\//i.test(url)) send({ type: 'open-link', url })
   })
   win.on('focus', () => send({ type: 'focus' }))
   win.on('close', (e) => {
@@ -169,10 +170,24 @@ function setupSession () {
 
 function registerIpc () {
   const h = (ch, fn) => ipcMain.handle(ch, (_e, ...a) => fn(...a))
-  h('p2p:init', () => ({ me: node.me, profile: node.profile, servers: node.listServers(), platform: process.platform, version: app.getVersion() }))
+  h('p2p:init', () => ({ me: node.me, profile: node.profile, servers: node.listServers(), platform: process.platform, version: app.getVersion(), clock: node.clockFix }))
   h('p2p:createServer', (name, icon) => node.createServer(name, icon))
   h('p2p:join', (code) => node.joinServer(String(code || '').trim()))
   h('p2p:canCreate', () => node.canCreateServer())
+  // Dosya paylaşımı
+  h('file:share', (p, ctx) => node.shareFile(String(p), ctx))
+  h('file:has', (hh) => node.hasFile(hh))
+  h('file:ctx', (hh, ctx) => node.addFileCtx(hh, ctx))
+  h('file:download', async (file, ctx, author) => {
+    const safe = String(file?.name || 'dosya').replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 200) || 'dosya'
+    const r = await dialog.showSaveDialog(win, { title: 'Dosyayı kaydet', defaultPath: path.join(app.getPath('downloads'), safe) })
+    if (r.canceled || !r.filePath) return null
+    return node.downloadFile(file, ctx, author, r.filePath)
+  })
+  h('file:cancel', (id) => node.cancelDownload(id))
+  ipcMain.on('file:show', (_e, p) => { if (typeof p === 'string' && path.isAbsolute(p)) shell.showItemInFolder(p) })
+  // Aktarmalı ses paketleri
+  ipcMain.on('voice:audio', (_e, to, pkt) => { if (Array.isArray(to)) for (const k of to.slice(0, 24)) node.sendAudio(k, pkt) })
   h('invite:create', (s, o) => node.createInvite(s, o || {}))
   h('invite:list', (s) => node.invites(s))
   h('invite:revoke', (s, id) => node.revokeInvite(s, id))
@@ -388,6 +403,9 @@ app.whenReady().then(async () => {
   node.on('peers', servers => send({ type: 'peers', servers }))
   node.on('eph', e => send({ type: 'eph', ...e }))
   node.on('signal', e => send({ type: 'signal', ...e }))
+  node.on('audio', e => send({ type: 'audio', ...e }))
+  node.on('file-progress', e => send({ type: 'file-progress', ...e }))
+  node.on('clock', e => send({ type: 'clock', ...e }))
   node.on('servers', servers => send({ type: 'servers', servers }))
   node.on('dm', e => send({ type: 'dm', ...e }))
   node.on('friends', () => send({ type: 'friends' }))

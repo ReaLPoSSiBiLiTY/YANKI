@@ -8,8 +8,11 @@
  *   bağlantı kesin olarak kapatılıp yenisi kurulur (eski "Bağlanıyor…" takılmasının nedeni).
  * - Sinyaller hedef oturuma ve bağlantı kuşağına (gen) etiketlenir; bayat sinyaller yok sayılır.
  * - Uzak açıklama gelmeden ulaşan ICE adayları tamponlanır (önceden kayboluyordu).
- * - Bekçi zamanlayıcı: 10 sn'de bağlanmazsa ICE yeniden başlatılır, 22 sn'de bağlantı
- *   iki tarafta da sıfırdan kurulur; kopmalarda otomatik onarım.
+ * - Bekçi zamanlayıcı: hiç kurulamayan bağlantıda 6 sn'de ICE yeniden başlatılır, ardından
+ *   artan aralıklarla (15/30/60 sn) sıfırdan kurulur. Kurulmuş bir bağlantı kısa süre koparsa
+ *   (ör. yayın sırasında hat dolduğunda) acele edilmez: 8 sn'de ICE yenilenir, 30 sn'de sıfırlanır.
+ * - Doğrudan bağlantı kurulamazsa ses, P2P ağı üzerinden aktarılır (relay-audio.js).
+ * - Yayın izleme isteği kalıcıdır: bağlantı yenilense de izleyici yayından düşmez.
  * - Aynı odadaki herkesle doğrudan P2P bağlantısı istenir (sinyaller aracıya muhtaç kalmaz).
  */
 
@@ -55,6 +58,7 @@ class Voice {
     this.sink.hidden = true
     document.body.appendChild(this.sink)
     this._lastBroadcast = 0
+    this.relay = window.AudioRelay ? new window.AudioRelay(this) : null
     setInterval(() => this._tick(), 1000)
     setInterval(() => this._levels(), 100)
     window.addEventListener('beforeunload', () => this.leave(true))
@@ -114,6 +118,7 @@ class Voice {
     this.channel = null
     this.api.eph(server, 'voice', { channel: null })
     for (const k of [...this.peers.keys()]) this._closePeer(k)
+    this.relay?.stopAll()
     for (const s of [this.mic, this.cam, this.screen]) s?.getTracks().forEach(t => t.stop())
     this.mic = this.cam = this.screen = null
     this.watchers.clear()
@@ -149,21 +154,27 @@ class Voice {
 
   _tick () {
     if (this.channel && Date.now() - this._lastBroadcast > 4000) this._broadcast()
-    // İzleme isteği yanıtsız kaldıysa (görüntü gelmediyse) yeniden iste
+    // İzleme isteği yanıtsız kaldıysa (görüntü gelmediyse) yeniden iste. Durum bilgisi
+    // geçici olarak gelmese bile izleme isteği silinmez (eskiden izleyici yayından düşüyordu).
     for (const key of this.watching) {
       const st = this.states.get(key)
       const p = this.peers.get(key)
-      if (!st || !st.screen || !this._inRoom(st)) { this.watching.delete(key); continue }
-      if (p && !p.streams.has(st.screen) && Date.now() - (this._watchAsk.get(key) || 0) > 4000) this._askWatch(key, true)
+      if (st && (!st.screen || !this._inRoom(st))) { this.watching.delete(key); continue }
+      if (st && p && !p.streams.has(st.screen) && Date.now() - (this._watchAsk.get(key) || 0) > 4000) this._askWatch(key, true)
     }
     let changed = false
+    const now = Date.now()
     for (const [k, st] of this.states) {
-      if (Date.now() - st.at > 13000) {
+      // Ses durumu birkaç kez gelmeyebilir; WebRTC bağlantısı ayaktaysa kişi hâlâ odadadır
+      const p = this.peers.get(k)
+      const alive = p && p.pc.connectionState === 'connected'
+      if (now - st.at > (alive ? 60000 : 30000)) {
         this.states.delete(k)
-        if (this.peers.has(k)) this._closePeer(k)
+        if (p) this._closePeer(k)
         changed = true
       }
     }
+    if (this._updateRelay()) changed = true
     if (changed) this.onUpdate()
   }
 
@@ -256,7 +267,7 @@ class Voice {
     }
     pc.onconnectionstatechange = () => {
       if (p.pc !== pc) return
-      if (pc.connectionState === 'connected') { p.attempts = 0; p.badSince = 0; this._retuneScreen(p) }
+      if (pc.connectionState === 'connected') { p.attempts = 0; p.badSince = 0; p.everConnected = true; this._retuneScreen(p); this._updateRelay() }
       if (pc.connectionState === 'failed') { try { pc.restartIce() } catch {} }
       this.onUpdate()
     }
@@ -283,18 +294,35 @@ class Voice {
     if (st === 'connected') { p.badSince = 0; return }
     if (!p.badSince) p.badSince = now
     const age = now - p.badSince
-    if (st === 'disconnected' && age > 4000 && p.attempts === 0) {
+    // Kurulmuş bağlantı kısa süre koptuysa (yoğun yayın, anlık ağ sorunu) Chromium çoğu zaman
+    // kendisi toparlar; erken müdahale bağlantıyı (ve izlenen yayını) boşuna düşürüyordu.
+    const firstIce = p.everConnected ? 8000 : 6000
+    const rebuildAfter = p.everConnected ? 30000 : [15000, 30000, 60000][Math.min(p.attempts - 1, 2)] || 60000
+    if (age > firstIce && p.attempts === 0) {
       p.attempts = 1
       try { p.pc.restartIce() } catch {}
-    } else if (age > 6000 && p.attempts === 0) {
-      p.attempts = 1
-      try { p.pc.restartIce() } catch {}
-    } else if (age > (p.attempts === 1 ? 15000 : 20000) && p.attempts >= 1) {
+    } else if (p.attempts >= 1 && age > rebuildAfter) {
       // İki tarafta da sıfırdan kur
       p.attempts++
       this._rebuild(p, p.gen + 1, true)
       if (this.watching.has(p.key)) setTimeout(() => this._askWatch(p.key, true), 500)
     }
+  }
+
+  // Doğrudan bağlantısı 7 sn'dir kurulamayan kişilere sesi P2P ağı üzerinden aktar
+  _updateRelay () {
+    if (!this.relay) return false
+    const now = Date.now()
+    let changed = false
+    const targets = []
+    for (const p of this.peers.values()) {
+      const ok = p.pc.connectionState === 'connected'
+      const want = !ok && p.badSince && now - p.badSince > 7000
+      if (!!p.relay !== !!want) { p.relay = !!want; changed = true }
+      if (p.relay) targets.push(p.key)
+    }
+    this.relay.setTargets(targets)
+    return changed
   }
 
   // Bir kişiyle bağlantıyı elle sıfırla (arayüzdeki "Yeniden bağlan")
@@ -326,7 +354,6 @@ class Voice {
     for (const id of p.streams.keys()) this._stopAudio(key, id)
     this._unwatch(key)
     this.peers.delete(key)
-    this.watching.delete(key)
     if (this.watchers.delete(key)) this._broadcast()
     this.api.wantPeer(key, 'voice', false)
   }
@@ -482,6 +509,7 @@ class Voice {
     this.mic.removeTrack(old)
     old.stop()
     this.mic.addTrack(nt)
+    this.relay?.restart()
     this._applyMute()
     this._unwatch(this.me)
     this._watch(this.me, this.mic)
@@ -682,7 +710,9 @@ class Voice {
 
   peerState (key) {
     const p = this.peers.get(key)
-    return p ? p.pc.connectionState : 'new'
+    if (!p) return 'new'
+    const s = p.pc.connectionState
+    return s !== 'connected' && (p.relay || this.relay?.receiving(key)) ? 'relay' : s
   }
 
   participants (server, channel) {
