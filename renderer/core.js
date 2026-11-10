@@ -217,7 +217,7 @@ function avatar (key, size = 40, extra = '') {
 function avatarFull (key, size = 40, { online = null, badge = true, anim = false } = {}) {
   const act = badge ? activityOf(key) : null
   return `<span class="avx" style="--s:${size}px">${avatar(key, size, anim ? 'anim' : '')}` +
-    (online !== null ? `<i class="sdot ${online ? 'on' : ''}"></i>` : '') +
+    (online !== null ? `<i class="sdot ${online ? 'on ' + (window.statusOf?.(key) || '') : ''}"></i>` : '') +
     (act ? `<i class="abadge ${act.type}" title="${esc(actText(act))}">${actIcon(act, Math.max(12, Math.round(size * 0.36)))}</i>` : '') +
     '</span>'
 }

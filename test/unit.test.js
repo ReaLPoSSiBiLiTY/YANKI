@@ -20,4 +20,13 @@ assert.ok(CHANGELOG.some(e => e.version === pkg.version), `changelog.js içinde 
 for (const e of CHANGELOG) for (const it of e.items) assert.ok(it.title && it.desc)
 const notes = execFileSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'release-notes.js'), 'v' + pkg.version]).toString()
 assert.ok(notes.includes('## Yenilikler') && notes.includes(`YANKI-${pkg.version}-win-x64.exe`))
+// Profil: sürüm ve kullanım sayaçları temizlenir
+const { sanitizeProfile } = require('../src/p2p/state')
+const pr = sanitizeProfile({ name: 'x', ver: '1.6.0', stats: { msgs: 12.7, dice: -3, evil: 5, streak: 1e12 } }, 1)
+assert.strictEqual(pr.ver, '1.6.0')
+assert.strictEqual(pr.stats.msgs, 12)
+assert.ok(!('evil' in pr.stats) && !(pr.stats.dice > 0))
+assert.ok(pr.stats.streak < 1e12)
+assert.strictEqual(sanitizeProfile({ name: 'x', ver: '<b>1.6</b>' }, 1).ver, null)
+
 console.log('✓ Birim testleri geçti')

@@ -134,9 +134,11 @@ function dmProfileHTML (key) {
       <div class="pc-av">${avatarFull(key, 88, { online: isOnline(key), badge: false })}</div>
       <div class="pc-body">
         <div class="pc-name">${esc(nameOf(key))}${p.pronouns ? `<small> · ${esc(p.pronouns)}</small>` : ''}</div>
+        ${versionHTML(key)}
         ${p.status ? `<div class="pc-status">${esc(p.status)}</div>` : ''}
         ${act ? activityBlock(act) : ''}
         ${p.bio ? `<h5>Hakkımda</h5><div class="pc-bio">${md(p.bio)}</div>` : ''}
+        ${badgesHTML(key)}
         ${d?.status === 'friends' && d.since ? `<h5>Arkadaşlık</h5><div class="pc-since">${fmtDate(d.since)} tarihinden beri</div>` : ''}
         ${mutual.length ? `<h5>Ortak sunucular</h5><div class="pc-since">${mutual.map(esc).join(', ')}</div>` : ''}
         <div class="pc-actions">${friendButton(key)}</div>

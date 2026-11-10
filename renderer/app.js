@@ -58,9 +58,12 @@ async function init () {
     onSpeaking: (key, on) => $$(`[data-speak="${CSS.escape(key)}"]`).forEach(n => n.classList.toggle('speaking', on))
   })
   music = new MusicPlayer()
+  applyA11y()
+  api.setStatus?.(settings.status || 'online').then(st => { S.myStatus = st || 'online'; renderMeCard() }).catch(() => {})
 
   api.on(onEvent)
   voice.onStats = updateNetUI
+  startStats()
   bindStatic()
   bindMentions()
   bindMiniDM()
@@ -143,6 +146,7 @@ async function onEvent (ev) {
       break
     case 'eph':
       if (ev.kind === 'voice') voice.onState(ev.server, ev.from, ev.data)
+      else if (ev.kind === 'game') onGameEph(ev.server, ev.from, ev.data)
       else if (ev.kind === 'typing' && ev.data && typeof ev.data.channel === 'string') {
         setTyping(ev.server + ':' + ev.data.channel, ev.from)
       }
@@ -153,6 +157,9 @@ async function onEvent (ev) {
     case 'audio':
       voice.relay?.onPacket(ev.from, ev)
       break
+    case 'game':
+      window.YankiGames?.onPacket(ev.from, ev.d)
+      break
     case 'file-progress':
       onFileProgress(ev)
       break
@@ -162,6 +169,14 @@ async function onEvent (ev) {
     case 'clock':
       clockWarn(ev.offset)
       break
+    case 'status':
+      S.statuses.set(ev.from, ev.status)
+      statusRedraw()
+      break
+    case 'mystatus':
+      S.myStatus = ev.status
+      renderMeCard()
+      break
     case 'sys-theme':
       document.body.classList.toggle('sysdark', !!ev.dark)
       break
@@ -170,12 +185,12 @@ async function onEvent (ev) {
       const miniSeen = ev.ops.some(o => o.type === 'dm' && o.author !== S.me) && miniOnDM(ev.peer)
       for (const o of ev.ops) {
         if (o.author === S.me) continue
-        if (o.type === 'friend-request') { notifyRaw(`${nameOf(ev.peer)}`, 'Sana arkadaşlık isteği gönderdi'); if (settings.sounds) voice.sound('friend') }
-        if (o.type === 'friend-accept') { notifyRaw(`${nameOf(ev.peer)}`, 'Arkadaşlık isteğini kabul etti 🎉'); if (settings.sounds) voice.sound('friend') }
+        if (o.type === 'friend-request') { notifyRaw(`${nameOf(ev.peer)}`, 'Sana arkadaşlık isteği gönderdi'); if (settings.sounds && !isDnd()) voice.sound('friend') }
+        if (o.type === 'friend-accept') { notifyRaw(`${nameOf(ev.peer)}`, 'Arkadaşlık isteğini kabul etti 🎉'); if (settings.sounds && !isDnd()) voice.sound('friend') }
         if (o.type === 'dm') {
           clearTyping('dm:' + ev.peer, ev.peer)
           const visible = (document.hasFocus() && S.mode === 'home' && S.dm === ev.peer) || miniSeen
-          if (!visible && settings.notify !== 'none') { notifyRaw(nameOf(ev.peer), plainText(o.text) || (o.hasImage ? '📷 Resim' : o.hasFile ? '📎 Dosya' : '')); if (settings.sounds) voice.sound('message') }
+          if (!visible && settings.notify !== 'none') { notifyRaw(nameOf(ev.peer), plainText(o.text) || (o.hasImage ? '📷 Resim' : o.hasFile ? '📎 Dosya' : '')); if (settings.sounds && !isDnd()) voice.sound('message') }
         }
       }
       if (S.mode === 'home' && S.dm === ev.peer) reloadMessages('cur')
@@ -190,6 +205,13 @@ async function onEvent (ev) {
       break
     case 'update-progress':
       updateProgress(ev)
+      break
+    case 'update-ready':
+      onUpdateReady(ev.info)
+      break
+    case 'update-error':
+      updBanner('')
+      toast('Güncelleme indirilemedi: ' + (ev.reason || ''), 6000)
       break
     case 'friends':
       refreshDMs()
@@ -219,7 +241,8 @@ function clearTyping (k, user) {
 }
 setInterval(() => renderTyping(), 1500)
 
-function notifyRaw (title, body) { api.notify(title, body) }
+function notifyRaw (title, body) { if (!isDnd()) api.notify(title, body) }
+const statusRedraw = debounce(() => { if (S.winHidden) return; renderMembers(); if (S.mode === 'home') { renderSidebar(); renderHome() } }, 300)
 
 const chatVisible = (serverId, channel) => document.hasFocus() && S.mode === 'server' && serverId === S.server && channel === S.channel && S.view === 'chat'
 
@@ -228,10 +251,10 @@ function maybeNotify (serverId, o) {
   const mention = mentionsMe(o.text)
   if (chatVisible(serverId, o.channel)) return
   if (Date.now() - o.ts > 600000) return // eşitlenen eski mesajlar için bildirim yok
-  if (settings.notify === 'none' || (settings.notify === 'mentions' && !mention)) return
+  if (isDnd() || settings.notify === 'none' || (settings.notify === 'mentions' && !mention)) return
   const ch = meta?.channels?.find(c => c.id === o.channel)
   api.notify(`${mention ? '📣 ' : ''}${nameOf(o.author)}${ch ? ' · #' + ch.name : ''}`, plainText(o.text) || (o.hasImage ? '📷 Resim' : o.hasFile ? '📎 Dosya' : o.locked ? '🔒 Şifreli mesaj' : ''))
-  if (settings.sounds) voice.sound('message')
+  if (settings.sounds && !isDnd()) voice.sound('message')
 }
 
 // =====================================================================
@@ -582,7 +605,7 @@ function renderVoiceCard () {
     <div class="vc-top">
       <span class="vc-wave ${cls}"><i></i><i></i><i></i></span>
       <div class="vc-info">
-        <span class="vc-status ${cls}">${text}</span>
+        <span class="vc-status ${cls}">${text}${voice.joinedAt ? ` <span class="vc-time" title="Sesli kanalda geçen süre">· ${sinceHTML(voice.joinedAt)}</span>` : ''}</span>
         <button class="vc-chan" data-act="goto-voice">${esc(vch?.name || 'Ses')}<small> / ${esc(vm?.name || '')}</small></button>
       </div>
       <button class="ib hang" data-act="hangup" title="Bağlantıyı kes">${icon('phoneOff', 18)}</button>
@@ -603,7 +626,7 @@ function renderMeCard () {
   box.innerHTML = `
     <button class="me-user" data-act="my-profile">
       ${avatarFull(S.me, 38, { online: true })}
-      <span class="me-text"><b>${esc(S.profile.name || 'Ben')}</b>${actLine(S.me, 'tiny') || `<small>${esc(S.profile.status || 'Çevrim içi')}</small>`}</span>
+      <span class="me-text"><b>${esc(S.profile.name || 'Ben')}</b>${actLine(S.me, 'tiny') || `<small>${esc(S.profile.status || STATUS[S.myStatus]?.label || 'Çevrim içi')}</small>`}</span>
     </button>
     <div class="me-btns">
       <button class="ib ${muted ? 'red' : ''}" data-act="mute" title="${voice?.muted ? 'Sesi aç' : 'Sustur'} (Ctrl+Shift+M)">${icon(muted ? 'micOff' : 'mic', 19)}</button>
@@ -668,6 +691,7 @@ function renderHeader () {
       ${S.view === 'chat' ? `
         <div class="hd-search">${icon('search', 15)}<input id="search" placeholder="Bu kanalda ara" value="${esc(S.search)}"></div>
         <button class="hd-btn" data-act="pins" title="Sabitlenmiş mesajlar">${icon('pin', 20)}${chObj?.pins?.length ? `<span class="hd-count">${chObj.pins.length}</span>` : ''}</button>` : ''}
+      <button class="hd-btn ${window.YankiGames?.current ? 'on' : ''}" data-act="games" title="Oyunlar: arkadaşlarınla YANKI'da oyna">${icon('gamepad', 20)}${lobbiesIn(S.server).length ? `<span class="hd-count">${lobbiesIn(S.server).length}</span>` : ''}</button>
       <button class="hd-btn ${S.showMembers ? 'on' : ''}" data-act="toggle-members" title="Üye listesi">${icon('users', 20)}</button>
     </div>`
 }
@@ -909,6 +933,7 @@ async function send () {
       if (size > 10.5 * 1024 * 1024) { toast('Ekler çok büyük (toplam en fazla ~7 MB).'); return }
       const files = S.files.length ? await takeStagedFiles() : undefined
       await postCtx('message', { text: namesToMentions(text), attachments: S.attachments, files, replyTo: S.reply })
+      noteSent(text)
       S.reply = null
       S.attachments = []
       S.files = []
@@ -1036,14 +1061,16 @@ function tileTop (t) {
   // Yayının anlık veri hızı: izlerken gelen, yayıncıyken toplam giden
   const e = t.self ? voice.netTotals() : voice.net.get(t.key)
   const rate = e ? (t.self ? `↑ ${fmtRate(e.txRate)}` : t.watching ? `↓ ${fmtRate(e.rxRate)}` : '') : ''
-  return `<span class="tile-viewers" title="${esc(names || 'Henüz izleyen yok')}">${icon('eye', 14)} ${n}${t.self ? ' izleyici' : ''}</span>${rate ? `<span class="tile-viewers tile-rate" data-act="net-stats" title="Bağlantı istatistikleri">${rate}${!t.self && e?.fps ? ` · ${Math.round(e.fps)} fps` : ''}</span>` : ''}`
+  const since = t.self ? voice.screenAt : t.watching ? voice.watchAt.get(t.key) : 0
+  const dur = since ? `<span class="tile-viewers" title="${t.self ? 'Yayın süresi' : 'İzleme süresi'}">${icon('clock', 13)} ${sinceHTML(since, t.self ? 'Yayında ' : 'İzliyorsun ')}</span>` : ''
+  return dur + `<span class="tile-viewers" title="${esc(names || 'Henüz izleyen yok')}">${icon('eye', 14)} ${n}${t.self ? ' izleyici' : ''}</span>${rate ? `<span class="tile-viewers tile-rate" data-act="net-stats" title="Bağlantı istatistikleri">${rate}${!t.self && e?.fps ? ` · ${Math.round(e.fps)} fps` : ''}</span>` : ''}`
 }
 
 function tileButtons (t) {
   let b = ''
   if (t.kind === 'screen' && !t.self && t.watching) {
     // Ses düzeyi kaydırıcısı: değeri dizeye katılmaz ki sürüklerken yeniden çizilmesin
-    b += `<label class="tile-vol" title="Yayın sesi" data-key="${t.key}">${icon('volume', 15)}<input type="range" min="0" max="100" step="1" data-stream-vol="${t.key}"></label>`
+    b += `<label class="tile-vol" title="Yayın sesi" data-key="${t.key}">${icon('volume', 15)}<input type="range" min="0" max="200" step="1" list="vol-ticks" data-stream-vol="${t.key}"><b class="vol-v"></b></label>`
     b += `<button class="tile-btn danger" data-act="unwatch" data-key="${t.key}" title="Yayını kapat">${icon('x', 15)}<span>Yayını Kapat</span></button>`
   }
   if (t.kind === 'screen' && t.self) b += `<button class="tile-btn" data-act="self-preview" title="${voice.selfPreview ? 'Önizlemeyi kapat (daha az kaynak)' : 'Önizlemeyi göster'}">${icon(voice.selfPreview ? 'eyeOff' : 'eye', 15)}</button>`
@@ -1070,7 +1097,7 @@ function updateTile (div, t, big, parts) {
     bEl.innerHTML = btns
     bEl._h = btns
     const vol = $('[data-stream-vol]', bEl)
-    if (vol) vol.value = Math.round(voice.streamVolume(t.key) * 100)
+    if (vol) { vol.value = Math.round(voice.streamVolume(t.key) * 100); vol.nextElementSibling.textContent = '%' + vol.value }
   }
 
   const media = $('.tile-media', div)
@@ -1387,7 +1414,7 @@ function openProfileCard (key, anchor) {
       <div class="pc-av">${avatarFull(key, 84, { online: isOnline(key), badge: false, anim: true })}</div>
       <div class="pc-body">
         <div class="pc-name">${esc(nameOf(key))}${p.pronouns ? `<small> · ${esc(p.pronouns)}</small>` : ''}</div>
-        <button class="pc-key" data-act="copy-key" data-key="${key}" title="Arkadaş kodunu kopyala">${key.slice(0, 8)}…${key.slice(-6)} ${icon('copy', 11)}</button>
+        <button class="pc-key" data-act="copy-key" data-key="${key}" title="Arkadaş kodunu kopyala">${key.slice(0, 8)}…${key.slice(-6)} ${icon('copy', 11)}</button>${versionHTML(key)}
         ${p.status ? `<div class="pc-status">${esc(p.status)}</div>` : ''}
         ${mem ? `<div class="pc-roles">
           ${mem.owner ? `<span class="role gold">${icon('crown', 13)} Sahip</span>` : ''}
@@ -1399,8 +1426,9 @@ function openProfileCard (key, anchor) {
         </div>` : ''}
         ${act ? activityBlock(act) : ''}
         ${p.bio ? `<h5>Hakkımda</h5><div class="pc-bio">${md(p.bio)}</div>` : ''}
+        ${badgesHTML(key)}
         ${mem?.joinedAt ? `<h5>Üyelik</h5><div class="pc-since">${fmtDate(mem.joinedAt)}</div>` : ''}
-        ${inRoom ? `<h5>Ses düzeyi</h5><input type="range" min="0" max="100" value="${Math.round((voice.volumes[key] ?? 1) * 100)}" id="pc-vol">` : ''}
+        ${inRoom ? `<h5>Ses düzeyi <b class="vol-v" id="pc-vol-v">%${Math.round(voice.userVolume(key) * 100)}</b></h5><input type="range" min="0" max="200" list="vol-ticks" value="${Math.round(voice.userVolume(key) * 100)}" id="pc-vol" title="Standart %100, en fazla %200">` : ''}
         <div class="pc-actions">
           ${isMe ? `<button class="btn small primary" id="pc-edit">${icon('edit', 15)} Profili düzenle</button>` : `<button class="btn small primary" data-act="open-dm" data-key="${key}">${icon('chat', 15)} Mesaj</button>${friendButton(key)}`}
           ${m && !isMe ? '<button class="btn small" id="pc-mention">@ Bahset</button>' : ''}
@@ -1414,7 +1442,7 @@ function openProfileCard (key, anchor) {
   $('#pc-edit', pop)?.addEventListener('click', () => { closePopup(); openSettings('profile') })
   $('#pc-mention', pop)?.addEventListener('click', () => { closePopup(); const t = $('#input'); t.value += (t.value && !t.value.endsWith(' ') ? ' ' : '') + '@' + nameOf(key) + ' '; t.focus() })
   $('#pc-groups', pop)?.addEventListener('click', (e) => { e.stopPropagation(); groupMenu(key, e.currentTarget) })
-  $('#pc-vol', pop)?.addEventListener('input', (e) => voice.setUserVolume(key, e.target.value / 100))
+  $('#pc-vol', pop)?.addEventListener('input', (e) => { const v = snapVol(e.target); $('#pc-vol-v', pop).textContent = '%' + v; voice.setUserVolume(key, v / 100) })
   $('#pc-admin', pop)?.addEventListener('click', async () => { closePopup(); await api.post(S.server, 'role-set', { user: key, role: mem?.admin ? 'member' : 'admin' }) })
   $('#pc-kick', pop)?.addEventListener('click', async () => { closePopup(); if (await confirmModal('Üyeyi at', `${esc(nameOf(key))} sunucudan atılacak (yeni bir davetle yeniden katılabilir).`, 'At')) await api.post(S.server, 'kick', { user: key }) })
   $('#pc-ban', pop)?.addEventListener('click', async () => { closePopup(); if (await confirmModal('Üyeyi yasakla', `${esc(nameOf(key))} kalıcı olarak yasaklanacak; mesajları ve bağlantıları reddedilecek.`, 'Yasakla')) await api.post(S.server, 'ban', { user: key }) })
@@ -1505,7 +1533,7 @@ function openProfileSetup () {
 
 async function openSettings (tab = 'profile') {
   const draft = { ...S.profile }
-  const tabs = [['profile', 'Profilim', 'edit'], ['appearance', 'Görünüm', 'palette'], ['activity', 'Etkinlik', 'gamepad'], ['av', 'Ses ve Görüntü', 'mic'], ['screen', 'Ekran Paylaşımı', 'screen'], ['notify', 'Bildirimler ve pencere', 'bell'], ['net', 'Ağ ve Gizlilik', 'shield'], ['about', 'Hakkında', 'sparkle']]
+  const tabs = [['profile', 'Profilim', 'edit'], ['appearance', 'Görünüm', 'palette'], ['a11y', 'Erişilebilirlik', 'a11y'], ['activity', 'Etkinlik', 'gamepad'], ['av', 'Ses ve Görüntü', 'mic'], ['screen', 'Ekran Paylaşımı', 'screen'], ['notify', 'Bildirimler ve pencere', 'bell'], ['net', 'Ağ ve Gizlilik', 'shield'], ['about', 'Hakkında', 'sparkle']]
   const body = el(`<div class="settings"><nav>${tabs.map(([k, l, i]) => `<button data-tab="${k}">${icon(i, 16)}<span>${l}</span></button>`).join('')}</nav><div class="st-pane"></div></div>`)
   let testStream = null
   let testRaf = 0
@@ -1742,6 +1770,8 @@ async function openSettings (tab = 'profile') {
       $('#nt-mode', pane).addEventListener('change', e => { settings.notify = e.target.value; saveSettings() })
       $('#nt-sound', pane).addEventListener('change', e => { settings.sounds = e.target.checked; saveSettings() })
       $('#nt-tray', pane).addEventListener('change', e => { settings.closeToTray = e.target.checked; saveSettings(); api.setCloseToTray?.(settings.closeToTray) })
+    } else if (k === 'a11y') {
+      a11yPane(pane)
     } else if (k === 'net') {
       pane.innerHTML = `
         <div class="form">
@@ -1938,10 +1968,13 @@ function bindStatic () {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { renderAll(); if (chatCtx()) reloadMessages('cur') } })
   document.addEventListener('input', (e) => {
     const r = e.target.closest?.('[data-stream-vol]')
-    if (r) voice.setStreamVolume(r.dataset.streamVol, +r.value / 100)
+    if (r) { const v = snapVol(r); if (r.nextElementSibling) r.nextElementSibling.textContent = '%' + v; voice.setStreamVolume(r.dataset.streamVol, v / 100) }
   })
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) renderStage() })
 }
+
+// %100'e yakınken oraya yapışsın (standart düzeye dönmek kolay olsun)
+function snapVol (r) { let v = +r.value; if (v > 94 && v < 106 && v !== 100) { v = 100; r.value = 100 } return v }
 
 function startEdit (id) {
   const msg = S.msgs.find(x => x.id === id)
@@ -1995,7 +2028,8 @@ async function onClick (e) {
     case 'user': if (e.target.closest('.fr-actions')) break; e.stopPropagation(); openProfileCard(key, a); break
     case 'bot': e.stopPropagation(); openBotCard(id, a); break
     case 'bots-admin': closePopup(); openBotsModal(); break
-    case 'my-profile': openProfileCard(S.me, a); break
+    case 'my-profile': statusMenu(a); break
+    case 'games': openGames(); break
     case 'settings': openSettings('profile'); break
     case 'toggle-members': S.showMembers = !S.showMembers; save('showMembers', S.showMembers); renderLayout(); renderMembers(); renderHeader(); break
     case 'toggle-view':
@@ -2036,7 +2070,10 @@ async function onClick (e) {
     case 'self-preview': e.stopPropagation(); voice.selfPreview = !voice.selfPreview; renderStage(); break
     case 'net-stats': e.stopPropagation(); openNetStats(); break
     case 'peer-reconnect': e.stopPropagation(); voice.reconnect(key); toast('Bağlantı yeniden kuruluyor…', 2000); break
-    case 'update': openUpdateModal(); break
+    case 'update': if (S.updReady) installUpdate(); else openUpdateModal(); break
+    case 'upd-install': installUpdate(); break
+    case 'upd-later': postponeUpdate(); break
+    case 'upd-hide': updBanner(''); break
     case 'pins': pinsPopup(a); break
     case 'open-link': e.preventDefault(); openLink(a.dataset.url); break
     case 'spoiler': a.classList.add('revealed'); break

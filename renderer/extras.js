@@ -176,6 +176,7 @@ function openPollCreator () {
         if (options.length < 2) { toast('En az iki seçenek gerekli.'); return false }
         const pub = $('input[name=pm-kind]:checked', node).value === 'public'
         await postCtx('message', { text: '', attachments: [], poll: { question, options, public: pub } })
+        bump('polls')
         S._scrollBottomNext = true
         await loadMessages(true)
       }
@@ -303,6 +304,7 @@ async function sendMini () {
   if (!text.trim() || !S.mini) return
   try {
     await api.dmPost(S.mini.key, 'dm', { text, attachments: [] })
+    bump('msgs')
   } catch (e) { toast(String(e.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); return }
   inp.value = ''
   inp.style.height = 'auto'
@@ -496,15 +498,55 @@ function notesHTML (raw) {
   return html || '<p class="muted">Sürüm notu yok.</p>'
 }
 
+// Açılışta yeni sürüm bulunursa üstte bir şerit çıkar: indirilir, hazır olunca (sesli
+// kanalda değilsen) 10 sn geri sayımla kurulup YANKI yeniden açılır.
+let updTimer = null
+function updBanner (html) {
+  const b = $('#upd-banner')
+  b.hidden = !html
+  b.innerHTML = html || ''
+}
+
 function onUpdateAvailable (info) {
-  const first = !S.update
   S.update = info
   renderRail()
-  if (first) toast(`YANKI ${info.version} yayımlandı — güncellemek için soldaki yeşil düğmeye tıkla.`, 6000)
+  if (S.updReady) return
+  if (info.mode === 'auto' && info.asset) updBanner(`${icon('download', 16)}<span><b>YANKI ${esc(info.version)}</b> bulundu, indiriliyor… <span id="upd-pct">%0</span></span><button class="link-like" data-act="update">Ayrıntılar</button>`)
+  else updBanner(`${icon('download', 16)}<span><b>YANKI ${esc(info.version)}</b> yayımlandı.</span><button class="btn small primary" data-act="update">İndir</button><button class="mini" data-act="upd-hide">${icon('x', 14)}</button>`)
+}
+
+function onUpdateReady (info) {
+  S.updReady = true
+  S.update = info || S.update
+  renderRail()
+  const v = esc(S.update?.version || '')
+  clearInterval(updTimer)
+  if (voice?.active) {
+    updBanner(`${icon('sparkle', 16)}<span><b>YANKI ${v}</b> hazır. Görüşmen bitince yeniden başlat.</span><button class="btn small primary" data-act="upd-install">Şimdi yeniden başlat</button><button class="mini" data-act="upd-hide">${icon('x', 14)}</button>`)
+    return
+  }
+  let n = 10
+  const draw = () => updBanner(`${icon('sparkle', 16)}<span><b>YANKI ${v}</b> hazır — <b>${n} sn</b> içinde kurulup yeniden açılacak.</span><button class="btn small primary" data-act="upd-install">Şimdi</button><button class="btn small" data-act="upd-later">Sonra</button>`)
+  draw()
+  updTimer = setInterval(() => { n--; if (n <= 0) { clearInterval(updTimer); installUpdate() } else draw() }, 1000)
+}
+
+function postponeUpdate () {
+  clearInterval(updTimer)
+  updBanner(`${icon('sparkle', 16)}<span><b>YANKI ${esc(S.update?.version || '')}</b> hazır.</span><button class="btn small primary" data-act="upd-install">Yeniden başlat</button><button class="mini" data-act="upd-hide">${icon('x', 14)}</button>`)
+}
+
+function installUpdate () {
+  clearInterval(updTimer)
+  updBanner(`<span class="spinner small"></span><span>Güncelleme kuruluyor, YANKI birazdan yeniden açılacak…</span>`)
+  voice?.leave?.(true)
+  api.updateInstall().catch(e => { toast(errText(e)); updBanner('') })
 }
 
 function updateProgress (p) {
   S.updProg = p
+  const pct = $('#upd-pct')
+  if (pct && p.total) pct.textContent = '%' + Math.round(p.got / p.total * 100)
   const bar = $('#upd-bar i')
   if (bar) bar.style.width = (p.total ? Math.round(p.got / p.total * 100) : 0) + '%'
   const lbl = $('#upd-status')
@@ -536,13 +578,10 @@ function openUpdateModal () {
             label: `${icon('download', 17)} Güncelle`,
             kind: 'primary',
             onClick: async (node) => {
+              if (S.updReady) { installUpdate(); return }
               $('.um-progress', node).hidden = false
-              updateProgress({ got: 0, total: u.asset.size || 0 })
-              const ok = await api.updateDownload()
-              if (!ok) throw new Error('İndirme başlatılamadı.')
-              updateProgress({ got: u.asset.size, total: u.asset.size, done: true })
-              voice?.leave?.(true)
-              await api.updateInstall()
+              updateProgress(S.updProg || { got: 0, total: u.asset.size || 0 })
+              await api.updateDownload() // zaten iniyorsa false döner; bitince 'update-ready' gelir
               return false
             }
           }
@@ -934,4 +973,322 @@ function refreshNetStats () {
   if (box) box.innerHTML = netStatsHTML()
 }
 
-Object.assign(window, { fmtRate, netLine, openNetStats, refreshNetStats, stageFiles, stagedFilesHTML, takeStagedFiles, filesHTML, updateFileCards, downloadFileFrom, onFileProgress, openLink, fmtSize, GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })
+// =====================================================================
+// Durum: Çevrim içi / Uzakta / Rahatsız Etme
+// =====================================================================
+S.myStatus = 'online'
+S.statuses = new Map()
+const STATUS = {
+  online: { label: 'Çevrim içi', desc: '' },
+  away: { label: 'Uzakta', desc: '5 dk hareketsiz kalınca kendiliğinden açılır' },
+  dnd: { label: 'Rahatsız Etme', desc: 'Bildirimler ve mesaj sesleri susturulur' }
+}
+
+function statusOf (key) {
+  if (key === S.me) return S.myStatus
+  if (S.statuses.has(key)) return S.statuses.get(key)
+  for (const m of S.meta.values()) { const x = m?.members?.find?.(y => y.key === key); if (x?.status) return x.status }
+  return 'online'
+}
+
+const isDnd = () => S.myStatus === 'dnd'
+
+function setMyStatus (st) {
+  settings.status = st
+  saveSettings()
+  api.setStatus?.(st).then(eff => { S.myStatus = eff || st; renderMeCard(); renderMembers() })
+}
+
+function statusMenu (anchor) {
+  const cur = settings.status || 'online'
+  menu([
+    ...Object.entries(STATUS).map(([k, v]) => ({
+      label: `<span class="st-row"><i class="sdot on ${k}"></i><span><b>${v.label}</b>${v.desc ? `<small>${v.desc}</small>` : ''}</span></span>`,
+      icon: cur === k ? 'check' : null,
+      onClick: () => setMyStatus(k)
+    })),
+    '-',
+    { label: 'Profilimi göster', icon: 'user', onClick: () => openProfileCard(S.me, anchor) },
+    { label: 'Profili düzenle', icon: 'edit', onClick: () => openSettings('profile') }
+  ], anchor, { align: 'above' })
+}
+
+// =====================================================================
+// Kullanım sayaçları ve rozetler
+// =====================================================================
+// Sayaçlar bu bilgisayarda tutulur ve arada bir profile eklenerek diğer üyelere gönderilir.
+const ST_KEY = 'stats'
+S.stats = load(ST_KEY, {})
+const day = (d = new Date()) => d.toISOString().slice(0, 10)
+function bump (k, n = 1) { S.stats[k] = (S.stats[k] || 0) + n; save(ST_KEY, S.stats) }
+
+function trackDay () {
+  const today = day()
+  if (S.stats.lastDay === today) return
+  const y = day(new Date(Date.now() - 86400000))
+  S.stats.streak = S.stats.lastDay === y ? (S.stats.streak || 0) + 1 : 1
+  S.stats.days = (S.stats.days || 0) + 1
+  S.stats.lastDay = today
+  save(ST_KEY, S.stats)
+}
+
+function customScore () {
+  let n = 0
+  const t = settings.theme || {}
+  if (t.id && t.id !== 'yanki') n++
+  if (t.mode && t.mode !== 'dark') n++
+  if (S.profile?.banner) n++
+  if (S.profile?.bio) n++
+  if (S.profile?.color) n++
+  if (settings.a11y && Object.keys(settings.a11y).length) n++
+  return n
+}
+
+let lastPublish = 0
+function publishStats (force = false) {
+  if (!S.profile?.name) return
+  const stats = { ...S.stats, custom: customScore() }
+  delete stats.lastDay
+  const same = JSON.stringify(S.profile.stats || {}) === JSON.stringify(stats) && S.profile.ver === S.version
+  if (same || (!force && Date.now() - lastPublish < 3 * 3600000)) return
+  lastPublish = Date.now()
+  api.setProfile({ ...S.profile, ver: S.version, stats }).then(p => { if (p) S.profile = p }).catch(() => {})
+}
+
+function startStats () {
+  trackDay()
+  // Oyun ve müzik süreleri: dakikada bir kendi etkinliğine bak (uzaktayken sayma)
+  setInterval(async () => {
+    trackDay()
+    if (S.myStatus === 'away') return
+    const a = await api.activityCurrent?.().catch(() => null)
+    const cur = a?.current || a
+    if (cur?.type === 'game') bump('game')
+    else if (cur?.type === 'music') bump('music')
+    if (voice.active) bump('voice') // sesli kanaldaki dakikalar (çıkınca toplu eklenmesin diye burada)
+  }, 60000)
+  voice.onTime = (kind, ms) => { if (kind !== 'voice' && ms > 30000) bump(kind, Math.round(ms / 60000)) }
+  setTimeout(() => publishStats(true), 90 * 1000) // açılıştan sonra bir kez (sürüm de güncellenir)
+  setInterval(() => publishStats(false), 30 * 60000)
+}
+
+function noteSent (text, isPoll) {
+  bump('msgs')
+  if (/^\/(zar|roll|dice)\b/i.test(text || '')) bump('dice')
+  if (isPoll || /^\/(anket|açıkanket|acikanket|poll|openpoll)\b/i.test(text || '')) bump('polls')
+}
+
+const verNum3 = (v) => (String(v || '').match(/(\d+)\.(\d+)\.(\d+)/) || [0, 0, 0, 0]).slice(1).map(Number)
+const verCmp = (a, b) => { const x = verNum3(a); const y = verNum3(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0 }
+
+// Bilinen en yeni sürüm: bende kurulu olan, yayımlanan ve diğer üyelerin kullandıkları
+// "En çok" karşılaştırmaları: sunucularımdaki herkes arasında
+function knownPeople () {
+  const set = new Set()
+  for (const m of S.meta.values()) for (const x of m?.members || []) set.add(x.key)
+  return set
+}
+function latestVersion () {
+  let best = S.version
+  if (S.update?.version && verCmp(S.update.version, best) > 0) best = S.update.version
+  for (const k of knownPeople()) { const v = profileOf(k)?.ver; if (v && verCmp(v, best) > 0) best = v }
+  return best
+}
+
+const fmtH = (min) => min >= 120 ? Math.round(min / 60) + ' saat' : min + ' dakika'
+
+function badgesOf (key) {
+  const p = profileOf(key)
+  const mine = key === S.me
+  const st = mine ? { ...S.stats, custom: customScore() } : p?.stats || {}
+  const ver = mine ? S.version : p?.ver
+  const out = []
+  const add = (ic, color, title, text) => out.push({ ic, color, title, text })
+  // Sunucuda "en çok"lar
+  const top = (k, min) => {
+    if ((st[k] || 0) < min) return false
+    for (const o of knownPeople()) if (o !== key && (profileOf(o)?.stats?.[k] || 0) > st[k]) return false
+    return true
+  }
+  if ((st.days || 0) >= 100) add('crown', '#ffc24b', 'Demirbaş', `${st.days} gün! Artık mobilyalardan sayılıyor.`)
+  else if ((st.streak || 0) >= 30) add('star', '#ffc24b', 'Kapı Komşusu', `${st.streak} gündür her gün burada. Anahtarı bile var.`)
+  else if ((st.streak || 0) >= 7) add('star', '#ffb020', 'Müdavim', `${st.streak} gün üst üste uğradı. Ev yoksa YANKI var.`)
+  if ((st.game || 0) >= 3000) add('gamepad', '#ff5d5d', 'Uykusuz Oyuncu', `${fmtH(st.game)} oyun. Güneşi en son ne zaman gördü?`)
+  else if ((st.game || 0) >= 600) add('gamepad', '#9b6bff', 'Klavye Gladyatörü', `${fmtH(st.game)} oyunda. Bir dizi sezonundan uzun.`)
+  if ((st.music || 0) >= 600) add('headphones', '#3ddc84', 'Kulaklık Sakini', `${fmtH(st.music)} müzik. Kulaklığı çıkarınca kulakları üşüyor.`)
+  if ((st.dice || 0) >= 30) add('gem', '#18c8ff', 'Şans Perisi', `${st.dice} kez zar attı. Hayatını zar yönetiyor.`)
+  if ((st.custom || 0) >= 3) add('palette', '#ff4f8b', 'İç Mimar', 'YANKI\'yı kendi evi gibi döşedi.')
+  if (top('msgs', 50)) add('chat', '#18c8ff', 'Laf Ebesi', `Sunucunun en çok yazanı (${st.msgs} mesaj). Klavyesi tükenmek üzere.`)
+  if (top('voice', 60)) add('mic', '#3ddc84', 'Mikrofon Kurdu', `Sesli kanallarda ${fmtH(st.voice)}. Mikrofonu ona emanet.`)
+  if (top('polls', 3)) add('poll', '#ffb020', 'Kamuoyu Uzmanı', `${st.polls} anket açtı. "Bir anket daha, son olsun."`)
+  if ((st.wins || 0) >= 5) add('trophy', '#ffc24b', 'Arena Şampiyonu', `YANKI oyunlarında ${st.wins} galibiyet.`)
+  if ((st.streamed || 0) >= 300) add('screen', '#ff4f8b', 'Yayın Yıldızı', `${fmtH(st.streamed)} yayın yaptı. Sırada sponsorluk var.`)
+  if ((st.watched || 0) >= 300) add('eye', '#9b6bff', 'Patlamış Mısır', `${fmtH(st.watched)} başkalarının yayınını izledi.`)
+  const latest = latestVersion()
+  if (ver && verCmp(ver, latest) >= 0) add('sparkle', '#3ddc84', 'Taze Yankı', 'Hep en yeni sürümde. Güncelleme düğmesi onu görünce gülümsüyor.')
+  else if (ver) add('alert', '#ff8a2a', 'Eski Kafa', `Hâlâ ${ver} sürümünde. Yeni sürüm ${latest} onu bekliyor…`)
+  return out
+}
+
+function badgesHTML (key) {
+  const list = badgesOf(key)
+  if (!list.length) return ''
+  // Kısa rozetler; üzerine gelinen rozetin esprili açıklaması altta görünür
+  return `<h5>Rozetler</h5><div class="badges-wrap"><div class="badges">${list.map((b, i) => `<span class="badge ${i ? '' : 'on'}" style="--bc:${b.color}" data-tip="${esc(b.text)}">${icon(b.ic, 14)}<b>${esc(b.title)}</b></span>`).join('')}</div><small class="badge-tip">${esc(list[0].text)}</small></div>`
+}
+
+function versionHTML (key) {
+  const v = key === S.me ? S.version : profileOf(key)?.ver
+  if (!v) return '<span class="pc-ver old" title="Bu kişi 1.6\'dan eski bir sürüm kullanıyor">YANKI &lt; 1.6</span>'
+  const old = verCmp(v, latestVersion()) < 0
+  return `<span class="pc-ver ${old ? 'old' : ''}" title="${old ? 'Güncel değil' : 'Güncel'}">YANKI ${esc(v)}</span>`
+}
+
+document.addEventListener('mouseover', (e) => {
+  const b = e.target.closest?.('.badge[data-tip]')
+  if (!b || b.classList.contains('on')) return
+  const w = b.closest('.badges-wrap')
+  w.querySelectorAll('.badge.on').forEach(x => x.classList.remove('on'))
+  b.classList.add('on')
+  w.querySelector('.badge-tip').textContent = b.dataset.tip
+})
+
+// =====================================================================
+// Süreler (sesli kanal, yayın, izleme)
+// =====================================================================
+function fmtDur (ms) {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(s / 3600)
+  const mm = String(Math.floor(s / 60) % 60).padStart(2, '0')
+  const ss = String(s % 60).padStart(2, '0')
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
+}
+const sinceHTML = (ts, label = '') => ts ? `<span class="since" data-since="${ts}" data-label="${esc(label)}">${label}${fmtDur(Date.now() - ts)}</span>` : ''
+setInterval(() => {
+  if (!voice?.active || S.winHidden) return
+  for (const n of document.querySelectorAll('[data-since]')) n.textContent = n.dataset.label + fmtDur(Date.now() - +n.dataset.since)
+}, 1000)
+
+// =====================================================================
+// Erişilebilirlik
+// =====================================================================
+const DENSITY = [['compact', 'Sıkışık'], ['small', 'Küçük'], ['standard', 'Standart'], ['large', 'Büyük (kolay okunur)']]
+function applyA11y () {
+  const a = settings.a11y || {}
+  document.body.classList.remove('dens-compact', 'dens-small', 'dens-large')
+  if (a.density && a.density !== 'standard') document.body.classList.add('dens-' + a.density)
+  document.body.classList.toggle('a11y-links', !!a.underline)
+  document.body.classList.toggle('a11y-contrast', !!a.contrast)
+  api.setZoom?.(a.zoom || 1)
+}
+
+// Ctrl/⌘ + artı/eksi/0 ile yakınlaştırma (ayar olarak saklanır)
+const ZOOMS = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75]
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+  const a = settings.a11y = settings.a11y || {}
+  const cur = a.zoom || 1
+  let i = ZOOMS.indexOf(cur); if (i < 0) i = 2
+  if (e.key === '+' || e.key === '=') a.zoom = ZOOMS[Math.min(ZOOMS.length - 1, i + 1)]
+  else if (e.key === '-') a.zoom = ZOOMS[Math.max(0, i - 1)]
+  else if (e.key === '0') a.zoom = 1
+  else return
+  e.preventDefault()
+  saveSettings(); applyA11y()
+  toast('Yakınlaştırma %' + Math.round(a.zoom * 100), 1200)
+})
+
+function a11yPane (pane) {
+  const a = settings.a11y || {}
+  const zooms = [[0.9, '%90'], [1, '%100'], [1.1, '%110'], [1.25, '%125'], [1.5, '%150']]
+  pane.innerHTML = `
+    <div class="form">
+      <h4>Yazı ve arayüz boyutu</h4>
+      <div class="mode-seg five">${zooms.map(([z, l]) => `<button class="${(a.zoom || 1) === z ? 'on' : ''}" data-zoom="${z}">${l}</button>`).join('')}</div>
+      <p class="muted small">Tüm YANKI penceresini büyütür ya da küçültür. Kısayol: Ctrl/⌘ + artı / eksi / 0.</p>
+      <h4>Mesaj görünümü</h4>
+      <div class="dens-list">${DENSITY.map(([k, l]) => `<label class="dens-card ${(a.density || 'standard') === k ? 'on' : ''}"><input type="radio" name="dens" value="${k}" ${(a.density || 'standard') === k ? 'checked' : ''}><span class="dens-prev dens-${k}"><i></i><b>Ayşe</b><span>Bu akşam oynuyor muyuz?</span></span><span>${l}</span></label>`).join('')}</div>
+      <h4>Okunabilirlik</h4>
+      <label class="check"><input type="checkbox" id="a11y-contrast" ${a.contrast ? 'checked' : ''}> Yüksek kontrastlı yazı (soluk yazıları belirginleştirir)</label>
+      <label class="check"><input type="checkbox" id="a11y-links" ${a.underline ? 'checked' : ''}> Bağlantıların altını çiz</label>
+    </div>`
+  const commit = () => { settings.a11y = a; saveSettings(); applyA11y() }
+  $$('[data-zoom]', pane).forEach(b => b.addEventListener('click', () => { a.zoom = +b.dataset.zoom; commit(); a11yPane(pane) }))
+  $$('input[name=dens]', pane).forEach(r => r.addEventListener('change', () => { a.density = r.value; commit(); a11yPane(pane) }))
+  $('#a11y-contrast', pane).addEventListener('change', e => { a.contrast = e.target.checked; commit() })
+  $('#a11y-links', pane).addEventListener('change', e => { a.underline = e.target.checked; commit() })
+}
+
+// =====================================================================
+// Oyunlar: bekleme odaları (oyun motoru games.js yalnızca gerektiğinde yüklenir)
+// =====================================================================
+S.games = new Map()
+const GAMES = [
+  ['football', 'Futbol', 'ball', 'Haxball tarzı takım maçı', '2–10 oyuncu'],
+  ['arena', 'Arena', 'target', 'Yukarıdan bakışlı 2D nişancı', '2–8 oyuncu'],
+  ['snake', 'Yılan', 'snake', 'Çok oyunculu yılan', '1–6 oyuncu']
+]
+const gameName = (k) => GAMES.find(g => g[0] === k)?.[1] || 'Oyun'
+let gamesLoading = null
+function loadGames () {
+  if (window.YankiGames) return Promise.resolve()
+  gamesLoading = gamesLoading || new Promise((resolve, reject) => {
+    const sc = document.createElement('script')
+    sc.src = 'games.js'
+    sc.onload = resolve
+    sc.onerror = () => { gamesLoading = null; reject(new Error('Oyunlar yüklenemedi')) }
+    document.head.appendChild(sc)
+  })
+  return gamesLoading
+}
+
+const gamesRedraw = debounce(() => { if (!S.winHidden) renderHeader() }, 400)
+function onGameEph (server, from, d) {
+  if (!d || typeof d.id !== 'string' || d.id.length > 16) return
+  const k = server + ':' + d.id
+  if (d.closed) { if (S.games.delete(k)) gamesRedraw(); return }
+  if (!GAMES.some(g => g[0] === d.kind)) return
+  const isNew = !S.games.has(k)
+  S.games.set(k, { id: d.id, kind: d.kind, host: from, server, n: Math.max(1, d.n | 0), max: d.max | 0, st: d.st === 'play' ? 'play' : 'lobby', at: Date.now() })
+  if (isNew) {
+    gamesRedraw()
+    if (!isDnd() && window.YankiGames?.current?.id !== d.id) toast(`🎮 ${nameOf(from)} bir ${gameName(d.kind)} oyunu kurdu. Katılmak için üstteki oyun düğmesine bas.`, 6000)
+  }
+}
+function lobbiesIn (server) {
+  const now = Date.now()
+  for (const [k, g] of S.games) if (now - g.at > 12000) S.games.delete(k)
+  return [...S.games.values()].filter(g => g.server === server && g.host !== S.me)
+}
+window.onGameClosed = () => gamesRedraw()
+setInterval(() => { const n = S.games.size; if (n) { lobbiesIn(''); if (S.games.size !== n) gamesRedraw() } }, 10000)
+
+function openGames () {
+  if (S.mode !== 'server' || !S.server) return toast('Oyunlar bir sunucunun içinde oynanır.')
+  const server = S.server
+  const cur = window.YankiGames?.current
+  const list = lobbiesIn(server)
+  const { close, body } = openModal({
+    title: 'Oyunlar',
+    cls: 'games-modal',
+    body: `
+      <p class="muted small">Sunucudaki arkadaşlarınla doğrudan YANKI'da oyna. Oyunu kuran kişinin bilgisayarı oyunu yürütür; sunucu yok.</p>
+      ${list.length ? `<h4>Açık oyunlar</h4><div class="gl-open">${list.map(g => `<div class="gl-row">${icon(GAMES.find(x => x[0] === g.kind)[2], 20)}<span><b>${esc(gameName(g.kind))}</b><small>${esc(nameOf(g.host))} kurdu · ${g.n}/${g.max} oyuncu${g.st === 'play' ? ' · oynanıyor' : ''}</small></span><button class="btn small primary" data-join="${esc(g.server + ':' + g.id)}" ${g.st === 'play' || g.n >= g.max ? 'disabled' : ''}>Katıl</button></div>`).join('')}</div>` : ''}
+      <h4>Yeni oyun kur</h4>
+      <div class="gl-new">${GAMES.map(([k, n, ic, d, c]) => `<button class="gl-card" data-host="${k}">${icon(ic, 30)}<b>${n}</b><span>${d}</span><small>${c}</small></button>`).join('')}</div>
+      ${cur ? '<p class="muted small">Şu an bir oyundasın; yeni oyun kurarsan ondan çıkarsın.</p>' : ''}`,
+    actions: [{ label: 'Kapat' }]
+  })
+  body.addEventListener('click', async (e) => {
+    const h = e.target.closest('[data-host]')
+    const j = e.target.closest('[data-join]')
+    if (!h && !j) return
+    try { await loadGames() } catch (err) { return toast(err.message) }
+    close()
+    if (h) window.YankiGames.host(h.dataset.host, server)
+    else { const g = S.games.get(j.dataset.join); if (g) window.YankiGames.join(g); else toast('Bu oyun artık açık değil.') }
+    gamesRedraw()
+  })
+}
+
+Object.assign(window, { onGameEph, lobbiesIn, openGames, loadGames, STATUS, statusOf, isDnd, setMyStatus, statusMenu, startStats, noteSent, bump, publishStats, badgesHTML, versionHTML, fmtDur, sinceHTML, applyA11y, a11yPane, verCmp, postponeUpdate, onUpdateReady, installUpdate, updBanner, fmtRate, netLine, openNetStats, refreshNetStats, stageFiles, stagedFilesHTML, takeStagedFiles, filesHTML, updateFileCards, downloadFileFrom, onFileProgress, openLink, fmtSize, GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })

@@ -58,6 +58,11 @@ class Voice {
     try { this.streamVolumes = JSON.parse(localStorage.getItem('yanki.streamVolumes') || '{}') } catch {}
     this.selfPreview = false // kendi yayınının önizlemesi (kapalıyken bilgisayar daha az yorulur)
     this.net = new Map() // kişi -> { rx, tx, rxRate, txRate, rtt, path }
+    // Süreler: sesli kanala bağlanma, yayın yapma ve yayın izleme (kullanıcıya gösterilir, rozet sayaçlarına eklenir)
+    this.joinedAt = null
+    this.screenAt = null
+    this.watchAt = new Map()
+    this.onTime = null // (tür, ms) => {}
     this._netPrev = new Map()
     this.ctx = null
     this.sink = document.createElement('div')
@@ -115,6 +120,7 @@ class Voice {
     this._broadcast()
     for (const [k, st] of this.states) if (this._inRoom(st)) this._ensurePeer(k, st.sess)
     this._sound('join')
+    this.joinedAt = Date.now()
     this.api.setInVoice?.(true)
     this.onUpdate()
   }
@@ -135,6 +141,11 @@ class Voice {
     this.session = null
     this.net.clear()
     this._netPrev.clear()
+    this._endTimer('voice', this.joinedAt)
+    if (this.screenAt) this._endTimer('streamed', this.screenAt)
+    for (const t of this.watchAt.values()) this._endTimer('watched', t)
+    this.joinedAt = this.screenAt = null
+    this.watchAt.clear()
     this.api.setInVoice?.(false)
     if (!silent) this._sound('leave')
     this.onUpdate()
@@ -171,7 +182,7 @@ class Voice {
     for (const key of this.watching) {
       const st = this.states.get(key)
       const p = this.peers.get(key)
-      if (st && (!st.screen || !this._inRoom(st))) { this.watching.delete(key); continue }
+      if (st && (!st.screen || !this._inRoom(st))) { this.watching.delete(key); this._endTimer('watched', this.watchAt.get(key)); this.watchAt.delete(key); continue }
       if (st && p && !p.streams.has(st.screen) && Date.now() - (this._watchAsk.get(key) || 0) > 4000) this._askWatch(key, true)
     }
     let changed = false
@@ -210,7 +221,7 @@ class Voice {
       this._closePeer(from)
       this._sound('leave')
     }
-    if (!st || !st.screen) this.watching.delete(from)
+    if ((!st || !st.screen) && this.watching.delete(from)) { this._endTimer('watched', this.watchAt.get(from)); this.watchAt.delete(from) }
     const significant = !prev || !st || prev.channel !== st.channel || prev.muted !== st.muted || prev.deaf !== st.deaf || prev.cam !== st.cam || prev.screen !== st.screen || String(prev.watchers || []) !== String(st.watchers || []) || String(prev.watching || []) !== String(st.watching || [])
     if (significant) this.onUpdate()
   }
@@ -446,6 +457,7 @@ class Voice {
   watch (key) {
     if (!this.channel || this.watching.has(key)) return
     this.watching.add(key)
+    this.watchAt.set(key, Date.now())
     this._askWatch(key, true)
     this._broadcast()
     this.onUpdate()
@@ -453,6 +465,7 @@ class Voice {
 
   unwatch (key) {
     if (!this.watching.delete(key)) return
+    if (this.watchAt.has(key)) { this._endTimer('watched', this.watchAt.get(key)); this.watchAt.delete(key) }
     this._askWatch(key, false)
     const st = this.states.get(key)
     const p = this.peers.get(key)
@@ -543,7 +556,40 @@ class Voice {
   }
 
   _applyDeaf () {
-    for (const el of this.audioEls.values()) el.muted = this.deaf
+    for (const el of this.audioEls.values()) this._applyVol(el)
+  }
+
+  // Ses düzeyi %0–%200. %100'e kadar <audio> öğesinin kendi sesi kullanılır; üzerinde ses,
+  // kazanç düğümüyle (yalnızca gerektiğinde kurulur) yükseltilir.
+  _applyVol (el) {
+    const v = Math.max(0, Math.min(2, el._vol ?? 1))
+    if (v <= 1) {
+      el.volume = v
+      el.muted = this.deaf
+      if (el._gain) el._gain.gain.value = 0
+      return
+    }
+    el.volume = 1
+    el.muted = true // Chromium'da uzak akış Web Audio'ya ancak bir öğeye bağlıyken akar; öğe sessiz çalar
+    try {
+      if (!el._gain) {
+        const ctx = this._outCtx()
+        el._src = ctx.createMediaStreamSource(el.srcObject)
+        el._gain = ctx.createGain()
+        el._src.connect(el._gain).connect(ctx.destination)
+      }
+      el._gain.gain.value = this.deaf ? 0 : v
+    } catch (e) { console.warn('gain', e); el.volume = 1; el.muted = this.deaf }
+  }
+
+  _outCtx () {
+    if (!this.outCtx) {
+      this.outCtx = new AudioContext()
+      const id = this.settings().outputDevice
+      if (id && id !== 'default' && this.outCtx.setSinkId) this.outCtx.setSinkId(id).catch(() => {})
+    }
+    if (this.outCtx.state === 'suspended') this.outCtx.resume()
+    return this.outCtx
   }
 
   async setInputDevice () {
@@ -566,21 +612,25 @@ class Voice {
   setOutputDevice () {
     const id = this.settings().outputDevice
     for (const el of this.audioEls.values()) if (el.setSinkId) el.setSinkId(id && id !== 'default' ? id : '').catch(() => {})
+    if (this.outCtx?.setSinkId) this.outCtx.setSinkId(id && id !== 'default' ? id : '').catch(() => {})
   }
 
+  userVolume (key) { return this.volumes[key] ?? 1 }
+
   setUserVolume (key, v) {
+    v = Math.max(0, Math.min(2, v))
     this.volumes[key] = v
     try { localStorage.setItem('yanki.volumes', JSON.stringify(this.volumes)) } catch {}
-    for (const [k, el] of this.audioEls) if (k.startsWith(key + ':') && !el._screen) el.volume = Math.max(0, Math.min(1, v))
+    for (const [k, el] of this.audioEls) if (k.startsWith(key + ':') && !el._screen) { el._vol = v; this._applyVol(el) }
   }
 
   streamVolume (key) { return this.streamVolumes[key] ?? 1 }
 
   setStreamVolume (key, v) {
-    v = Math.max(0, Math.min(1, v))
+    v = Math.max(0, Math.min(2, v))
     this.streamVolumes[key] = v
     try { localStorage.setItem('yanki.streamVolumes', JSON.stringify(this.streamVolumes)) } catch {}
-    for (const [k, el] of this.audioEls) if (k.startsWith(key + ':') && el._screen) el.volume = v
+    for (const [k, el] of this.audioEls) if (k.startsWith(key + ':') && el._screen) { el._vol = v; this._applyVol(el) }
   }
 
   _playAudio (key, stream) {
@@ -592,7 +642,8 @@ class Voice {
     el.muted = this.deaf
     const stNow = this.states.get(key)
     el._screen = !!(stNow?.screen && stNow.screen === stream.id) || stream.getVideoTracks().length > 0
-    el.volume = el._screen ? this.streamVolume(key) : (this.volumes[key] ?? 1)
+    el._vol = el._screen ? this.streamVolume(key) : (this.volumes[key] ?? 1)
+    this._applyVol(el)
     const out = this.settings().outputDevice
     if (out && out !== 'default' && el.setSinkId) el.setSinkId(out).catch(() => {})
     this.sink.appendChild(el)
@@ -605,7 +656,12 @@ class Voice {
   _stopAudio (key, streamId) {
     const id = key + ':' + streamId
     const el = this.audioEls.get(id)
-    if (el) { el.srcObject = null; el.remove(); this.audioEls.delete(id) }
+    if (el) {
+      try { el._src?.disconnect(); el._gain?.disconnect() } catch {}
+      el.srcObject = null
+      el.remove()
+      this.audioEls.delete(id)
+    }
   }
 
   // ---------- Konuşma algılama ----------
@@ -714,6 +770,7 @@ class Voice {
     vt.contentHint = q.fps >= 60 ? 'motion' : 'detail'
     vt.onended = () => this.stopScreen()
     this.screen = stream
+    this.screenAt = Date.now()
     this.screenQuality = q
     this.watchers.clear()
     this._broadcast()
@@ -726,6 +783,8 @@ class Voice {
     this.screen.getTracks().forEach(t => { t.onended = null; t.stop() })
     this.screen = null
     this.watchers.clear()
+    this._endTimer('streamed', this.screenAt)
+    this.screenAt = null
     if (!silent) { this._broadcast(); this.onUpdate() }
   }
 
@@ -773,6 +832,8 @@ class Voice {
     const s = p.pc.connectionState
     return s !== 'connected' && (p.relay || this.relay?.receiving(key)) ? 'relay' : s
   }
+
+  _endTimer (kind, since) { if (since) this.onTime?.(kind, Date.now() - since) }
 
   // ---------- Trafik istatistikleri ----------
   // WebRTC (ses/görüntü/yayın) baytları getStats'tan; P2P (mesaj, dosya, aktarmalı ses) baytları

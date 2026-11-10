@@ -85,8 +85,19 @@ function sanitizeProfile (d, ts) {
     status: str(d.status, 80),
     pronouns: str(d.pronouns, 30),
     color: COLOR_RE.test(d.color || '') ? d.color : null,
+    // Kullandığı YANKI sürümü (profil kartında gösterilir) ve rozetler için kullanım sayaçları
+    ver: /^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(d.ver || '') ? d.ver : null,
+    stats: sanitizeStats(d.stats),
     updatedAt: ts
   }
+}
+
+const STAT_KEYS = ['days', 'streak', 'voice', 'game', 'music', 'dice', 'polls', 'msgs', 'wins', 'played', 'custom', 'streamed', 'watched']
+function sanitizeStats (s) {
+  if (!s || typeof s !== 'object') return null
+  const out = {}
+  for (const k of STAT_KEYS) { const v = Number(s[k]); if (Number.isFinite(v) && v > 0) out[k] = Math.min(Math.floor(v), 1e9) }
+  return out
 }
 
 function sanitizeAttachments (list) {

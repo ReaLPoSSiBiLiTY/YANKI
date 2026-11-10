@@ -26,6 +26,7 @@ const ONLINE_TTL = 45000
 const SIG_QUEUE_MS = 25000
 // Geçici mesajların zaman denetimi. Saat farkı düzeltildikten sonra bile birkaç dakikalık
 // farklara dayanıklı olsun (eskiden 90 sn'ydi; saati yanlış kişiler hiç duyulamıyordu).
+const GAME_MAX = 6000 // oyun paketi üst sınırı (bayt)
 const EPH_WINDOW = 5 * 60 * 1000
 const ICON_RE = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/
 
@@ -165,6 +166,9 @@ class P2PNode extends EventEmitter {
     this.routes = new Map() // anahtar -> bize onun mesajlarını ileten eş (aktarmalı ses için)
     this.downloads = new Map()
     this.traffic = new Map() // anahtar -> { rx, tx } (P2P bağlantısı üzerinden, bayt)
+    this.manualStatus = 'online' // kişinin seçtiği: online | away | dnd
+    this.idle = false // 5 dk hareketsizlik (ana süreç bildirir)
+    this.statuses = new Map() // anahtar -> durum
     this.on('activity', (e) => { if (e.from !== this.me) this.acts.set(e.from, { act: e.act, at: Date.now() }) })
   }
 
@@ -547,6 +551,7 @@ class P2PNode extends EventEmitter {
       owner: key === s.owner,
       admin: s.admins.has(key),
       online: online.has(key),
+      status: online.has(key) ? this.statusOf(key) : null,
       groups: [...s.groups.values()].filter(g => g.members.has(key)).map(g => g.id),
       invitedBy: m.invitedBy || null,
       canEncrypt: s.xkeys.has(key)
@@ -744,7 +749,8 @@ class P2PNode extends EventEmitter {
         lastText: last ? (last.text.slice(0, 80) || (last.attachments.length ? '📷 Resim' : last.files?.length ? '📎 ' + last.files[0].name : '')) : '',
         friendTs: st.lastFriendOp || 0,
         profile: this._profileOf(key),
-        online: this.isOnline(key)
+        online: this.isOnline(key),
+        status: this.statusOf(key)
       })
     }
     return out
@@ -802,6 +808,39 @@ class P2PNode extends EventEmitter {
     for (const [key, v] of this.acts) if (v.act && Date.now() - v.at < 50000) out.push({ key, act: v.act })
     return out
   }
+
+  // ---------- Durum: Çevrim içi / Uzakta / Rahatsız Etme ----------
+  get status () { return this.manualStatus === 'online' && this.idle ? 'away' : this.manualStatus }
+
+  setStatus (s) {
+    if (!['online', 'away', 'dnd'].includes(s)) return this.status
+    const before = this.status
+    this.manualStatus = s
+    if (this.status !== before) this._announceStatus()
+    return this.status
+  }
+
+  setIdle (on) {
+    const before = this.status
+    this.idle = !!on
+    if (this.status !== before) this._announceStatus()
+  }
+
+  _announceStatus () {
+    const st = this.status
+    for (const id of this.servers.keys()) this.sendEph(id, 'status', st)
+    for (const p of this.peers.values()) if (this.dms.has(p.key)) p.send({ t: 'st', d: st })
+    this.emit('mystatus', st)
+  }
+
+  _setPeerStatus (key, st) {
+    if (!['online', 'away', 'dnd'].includes(st)) return
+    if (this.statuses.get(key) === st) return
+    this.statuses.set(key, st)
+    this.emit('status', { from: key, status: st })
+  }
+
+  statusOf (key) { return key === this.me ? this.status : this.statuses.get(key) || 'online' }
 
   setActivity (act) {
     this.activity = sanitizeActivity(act)
@@ -1088,12 +1127,16 @@ class P2PNode extends EventEmitter {
       case 'act':
         if (this.dms.has(peer.key)) this.emit('activity', { from: peer.key, act: sanitizeActivity(m.d) })
         return
+      case 'st':
+        if (this.dms.has(peer.key) || this.sharesServer(peer.key)) this._setPeerStatus(peer.key, m.d)
+        return
       case 'dmtyp':
         if (this.dms.has(peer.key) || this.sharesServer(peer.key)) this.emit('dmtyping', { from: peer.key })
         return
       case 'eph': return this._onEph(peer, m)
       case 'sig': return this._onSig(peer, m)
       case 'au': return this._onAudio(peer, m)
+      case 'gm': return this._onGame(peer, m)
       case 'fq': return this._onFileReq(peer, m)
       case 'fd': { const d = this.downloads.get(m.id); if (d) d.onData(peer, m); return }
       case 'fe': { const d = this.downloads.get(m.id); if (d) d.onError(peer); return }
@@ -1159,7 +1202,9 @@ class P2PNode extends EventEmitter {
     const wasOnline = pres.has(m.from) && Date.now() - pres.get(m.from) < ONLINE_TTL
     pres.set(m.from, Date.now())
     if (!wasOnline) this.emit('peers', [m.s])
+    if (m.k === 'presence' && m.d && typeof m.d.st === 'string') this._setPeerStatus(m.from, m.d.st)
     if (m.k === 'presence' && m.d && 'act' in m.d) this.emit('activity', { from: m.from, act: sanitizeActivity(m.d.act) })
+    else if (m.k === 'status') this._setPeerStatus(m.from, m.d)
     else if (m.k === 'activity') this.emit('activity', { from: m.from, act: sanitizeActivity(m.d) })
     else this.emit('eph', { server: m.s, from: m.from, kind: m.k, data: m.d })
     if (m.ttl > 0) {
@@ -1220,6 +1265,40 @@ class P2PNode extends EventEmitter {
     } else if (m.ttl > 0 && peer.shared.size) {
       const target = this.peers.get(m.to)
       if (target && target !== peer) target.send({ ...m, ttl: 0 })
+    }
+  }
+
+  // ---------- Oyun paketleri (YANKI oyunları) ----------
+  // Oyunu kuran kişi (ev sahibi) oyunu yürütür; oyuncular tuş durumlarını, ev sahibi de oyunun
+  // anlık görüntüsünü gönderir. Yol, aktarmalı sesle aynıdır: doğrudan ya da ortak bir üye üzerinden.
+
+  sendGame (to, d) {
+    if (!HEX64.test(to) || to === this.me || !d || typeof d !== 'object') return
+    const json = JSON.stringify(d)
+    if (json.length > GAME_MAX) return
+    const m = { t: 'gm', to, from: this.me, d, at: this.now(), ttl: 1 }
+    const direct = this.peers.get(to)
+    if (direct) return direct.send(m)
+    m.sig = this._signObj([m.to, m.from, m.d, m.at])
+    const via = this.peers.get(this.routes.get(to))
+    if (via) return via.send(m)
+    for (const p of this.peers.values()) if (p.shared.size) p.send(m)
+  }
+
+  _onGame (peer, m) {
+    if (typeof m.to !== 'string' || typeof m.from !== 'string' || !HEX64.test(m.from) || !m.d || typeof m.d !== 'object') return
+    if (m.to === this.me) {
+      if (m.from === this.me || this.blocked.has(m.from)) return
+      if (peer.key !== m.from) {
+        if (!Number.isFinite(m.at) || Math.abs(this.now() - m.at) > EPH_WINDOW) return
+        if (!this._verifyObj([m.to, m.from, m.d, m.at], m.sig, m.from)) return
+        this.routes.set(m.from, peer.key)
+      }
+      if (!this.sharesServer(m.from)) return
+      this.emit('game', { from: m.from, d: m.d })
+    } else if (m.ttl > 0 && peer.shared.size) {
+      const target = this.peers.get(m.to)
+      if (target && target !== peer && JSON.stringify(m.d).length <= GAME_MAX) target.send({ ...m, ttl: 0 })
     }
   }
 
@@ -1314,7 +1393,7 @@ class P2PNode extends EventEmitter {
 
   _tick () {
     this._offerInvites()
-    for (const id of this.servers.keys()) this.sendEph(id, 'presence', { act: this.activity })
+    for (const id of this.servers.keys()) this.sendEph(id, 'presence', { act: this.activity, st: this.status })
     for (const p of this.peers.values()) if (this.dms.has(p.key)) p.send({ t: 'act', d: this.activity })
     const now = Date.now()
     for (const [n, t] of this.seen) if (now - t > EPH_WINDOW * 2) this.seen.delete(n)

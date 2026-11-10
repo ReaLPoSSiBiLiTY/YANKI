@@ -1,5 +1,5 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, Notification, systemPreferences, net, Menu, Tray, nativeImage, dialog, nativeTheme } = require('electron')
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, Notification, systemPreferences, net, Menu, Tray, nativeImage, dialog, nativeTheme, powerMonitor } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { P2PNode } = require('./src/p2p/node')
@@ -191,6 +191,8 @@ function registerIpc () {
   h('p2p:join', (code) => node.joinServer(String(code || '').trim()))
   h('p2p:canCreate', () => node.canCreateServer())
   h('net:stats', () => node.netStats())
+  h('status:set', (s) => node.setStatus(s))
+  h('status:get', () => node.status)
   // Sesli kanalda değilken pencere gizlenince zamanlayıcılar yavaşlasın (daha az işlemci)
   ipcMain.on('app:inVoice', (_e, on) => { try { win?.webContents.setBackgroundThrottling(!on) } catch {} })
   // Dosya paylaşımı
@@ -206,6 +208,7 @@ function registerIpc () {
   h('file:cancel', (id) => node.cancelDownload(id))
   ipcMain.on('file:show', (_e, p) => { if (typeof p === 'string' && path.isAbsolute(p)) shell.showItemInFolder(p) })
   // Aktarmalı ses paketleri
+  ipcMain.on('game:send', (_e, to, d) => { if (Array.isArray(to)) for (const k of to.slice(0, 12)) node.sendGame(k, d) })
   ipcMain.on('voice:audio', (_e, to, pkt) => { if (Array.isArray(to)) for (const k of to.slice(0, 24)) node.sendAudio(k, pkt) })
   h('invite:create', (s, o) => node.createInvite(s, o || {}))
   h('invite:list', (s) => node.invites(s))
@@ -423,8 +426,19 @@ app.whenReady().then(async () => {
   node.on('eph', e => send({ type: 'eph', ...e }))
   node.on('signal', e => send({ type: 'signal', ...e }))
   node.on('audio', e => send({ type: 'audio', ...e }))
+  node.on('game', e => send({ type: 'game', ...e }))
   node.on('file-progress', e => send({ type: 'file-progress', ...e }))
   node.on('clock', e => send({ type: 'clock', ...e }))
+  node.on('status', e => send({ type: 'status', ...e }))
+  node.on('mystatus', s => send({ type: 'mystatus', status: s }))
+  // 5 dakika boyunca klavye/fare hareketi yoksa "Uzakta" (bilgisayarın tamamında, yalnızca YANKI değil)
+  setInterval(() => {
+    let idle = 0
+    try { idle = powerMonitor.getSystemIdleTime() } catch {}
+    node.setIdle(idle >= 300)
+  }, 15000)
+  powerMonitor.on('lock-screen', () => node.setIdle(true))
+  powerMonitor.on('unlock-screen', () => node.setIdle(false))
   node.on('servers', servers => send({ type: 'servers', servers }))
   node.on('dm', e => send({ type: 'dm', ...e }))
   node.on('friends', () => send({ type: 'friends' }))
@@ -445,11 +459,18 @@ app.whenReady().then(async () => {
   activity.start()
 
   updater = new Updater(app, net, shell, UPDATE_REPO)
-  updater.on('available', info => send({ type: 'update-available', info }))
+  // Açılışta hemen denetle; yeni sürüm varsa kendiliğinden indir. Kurulum, arayüz
+  // (kullanıcı sesli kanalda değilse kısa bir geri sayımla) onay verince yapılır.
+  updater.on('available', info => {
+    send({ type: 'update-available', info })
+    if (info.mode === 'auto' && info.asset && !updater.file && !updater.busy) {
+      updater.download().then(ok => { if (ok) send({ type: 'update-ready', info }) }).catch(e => send({ type: 'update-error', reason: e.message }))
+    }
+  })
   updater.on('progress', p => send({ type: 'update-progress', ...p }))
-  const autoCheck = () => updater.check().catch(() => {})
-  setTimeout(autoCheck, 8000)
-  setInterval(autoCheck, 4 * 60 * 60 * 1000)
+  const autoCheck = () => { if (!updater.file) updater.check().catch(() => {}) }
+  win.webContents.once('did-finish-load', () => setTimeout(autoCheck, 1500))
+  setInterval(autoCheck, 2 * 60 * 60 * 1000)
 
   app.on('activate', () => showWindow())
 })

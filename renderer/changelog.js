@@ -3,6 +3,21 @@
 // (scripts/release-notes.js) bu listeden üretilir. Yeni sürümde en üste ekle.
 const CHANGELOG = [
   {
+    version: '1.6.0',
+    date: '2026-11-10',
+    title: 'Oyunlar, durumlar ve rozetler',
+    items: [
+      { icon: 'gamepad', title: 'YANKI oyunları', desc: 'Sunucudaki arkadaşlarınla doğrudan YANKI penceresinde oyna: Haxball tarzı Futbol (takımlı, 10 kişiye kadar), Arena (yukarıdan bakışlı 2D nişancı) ve çok oyunculu Yılan. Kanal başlığındaki oyun düğmesinden bir oyun kur ya da açık bir oyuna katıl. Oyunu kuranın bilgisayarı oyunu yürütür; sunucu yok.' },
+      { icon: 'download', title: 'Kendiliğinden güncelleme', desc: 'YANKI açılır açılmaz yeni sürüm var mı diye bakıyor, varsa üstte bir şeritle haber veriyor, kendisi indiriyor ve kısa bir geri sayımla yeniden başlayıp güncelleniyor. Sesli kanaldaysan konuşmanı bölmez; hazır olduğunda düğmeyle güncellersin.' },
+      { icon: 'user', title: 'Çevrim içi, Uzakta, Rahatsız Etme', desc: 'Profil kartına tıklayıp durumunu seç: yeşil, sarı ya da kırmızı nokta herkese görünür. Rahatsız Etme modunda bildirimler ve mesaj sesleri susar. 5 dakika fare ya da klavyeye dokunmazsan Uzakta\'ya geçersin, döndüğünde yeniden Çevrim içi olursun.' },
+      { icon: 'volume', title: 'Ses %200\'e kadar', desc: 'Kişilerin ve yayınların sesi varsayılan %100; çok kısık gelen biri için kaydırıcıyla %200\'e kadar yükseltebilirsin (%100 noktasına yapışır, geri dönmek kolay).' },
+      { icon: 'clock', title: 'Süreler', desc: 'Ses kartında sesli kanala ne zamandır bağlı olduğun, yayın kutusunda ne zamandır yayında olduğun ya da yayını ne zamandır izlediğin görünüyor.' },
+      { icon: 'a11y', title: 'Erişilebilirlik', desc: 'Ayarlar › Erişilebilirlik: tüm arayüzü %90 ile %150 arasında büyüt/küçült (Ctrl/⌘ + artı/eksi), mesajları Sıkışık, Küçük, Standart ya da Büyük (kolay okunur) göster; yüksek kontrastlı yazı ve altı çizili bağlantılar.' },
+      { icon: 'trophy', title: 'Rozetler', desc: 'Profillerde kullanım alışkanlıklarına göre esprili rozetler: Müdavim, Klavye Gladyatörü, Kulaklık Sakini, Şans Perisi, İç Mimar, Laf Ebesi, Mikrofon Kurdu, Kamuoyu Uzmanı, Arena Şampiyonu, Yayın Yıldızı, Patlamış Mısır, Taze Yankı ve daha fazlası.' },
+      { icon: 'sparkle', title: 'Sürüm etiketi', desc: 'Profil kartında kişinin kullandığı YANKI sürümü küçük bir etiketle görünüyor; güncel olmayanlar turuncu. Kimin güncellemediği artık belli!' }
+    ]
+  },
+  {
     version: '1.5.0',
     date: '2026-11-10',
     title: 'Hafif YANKI, bağlantı istatistikleri ve yayın sesi',

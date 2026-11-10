@@ -336,6 +336,30 @@ async function main () {
   assert.strictEqual(au.from, A.me)
   assert.strictEqual(au.q, 7)
 
+  // Oyun paketi: aynı yol, imzalı aktarım; sahte imzalı paket reddedilir
+  let gm = null
+  C.on('game', e => { gm = e })
+  A.sendGame(C.me, { g: 'abc', y: 'in', i: { u: 1 } })
+  await until(() => gm, 'aktarmalı oyun paketi')
+  assert.strictEqual(gm.from, A.me)
+  assert.deepStrictEqual(gm.d.i, { u: 1 })
+  gm = null
+  const forgedGm = { t: 'gm', to: C.me, from: A.me, d: { g: 'x' }, at: B.now(), ttl: 0, sig: '00'.repeat(64) }
+  C._onGame(C.peers.get(B.me), forgedGm)
+  assert.strictEqual(gm, null, 'sahte imzalı oyun paketi reddedildi')
+  A.sendGame(C.me, { big: 'x'.repeat(7000) })
+
+  // Durum: Rahatsız Etme ve hareketsizlik (Uzakta)
+  A.setStatus('dnd')
+  await until(() => B.statusOf(A.me) === 'dnd', 'durum yayıldı')
+  A.setIdle(true)
+  assert.strictEqual(A.status, 'dnd', 'Rahatsız Etme, hareketsizlikte değişmez')
+  A.setStatus('online')
+  await until(() => B.statusOf(A.me) === 'away', 'hareketsizken Uzakta')
+  A.setIdle(false)
+  await until(() => B.statusOf(A.me) === 'online', 'geri dönünce Çevrim içi')
+  assert.strictEqual(A.setStatus('bogus'), 'online')
+
   // Saat farkı: en az iki eşin ortak saati 5 dk ileriyse kendi saatimizi düzeltiriz
   const fake = { peers: new Map([['x', { offset: 300000 }], ['y', { offset: 301000 }]]), clockFix: 0, emit () {} }
   P2PNode.prototype._updateClock.call(fake)

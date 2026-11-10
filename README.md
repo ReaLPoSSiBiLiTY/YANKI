@@ -46,6 +46,16 @@ Topluluğun yalnızca üyelerinin bilgisayarlarında yaşar; herkes birbirine do
   </tr>
 </table>
 
+## v1.6'da yenilikler
+
+- **YANKI oyunları:** Futbol (Haxball tarzı, takımlı), Arena (2D nişancı) ve Yılan; sunucudaki arkadaşlarla doğrudan YANKI penceresinde. Oyunu kuran kişinin bilgisayarı oyunu yürütür, oyuncular yalnızca tuş durumlarını gönderir (P2P, sunucu yok). Oyun motoru yalnızca bir oyun açıldığında yüklenir.
+- **Kendiliğinden güncelleme:** Açılışta (ve sonra iki saatte bir) güncelleme denetimi; yeni sürüm otomatik indirilir, geri sayımla yeniden başlatılıp kurulur. Sesli kanaldayken kesinti yapılmaz.
+- **Durum:** Çevrim içi (yeşil), Uzakta (sarı), Rahatsız Etme (kırmızı). Rahatsız Etme'de bildirim ve mesaj sesleri susar; 5 dakika hareketsizlikte otomatik Uzakta.
+- **%200 ses:** Kişi ve yayın sesleri varsayılan %100, isteğe bağlı %200'e kadar.
+- **Süreler:** Sesli kanalda, yayında ve yayın izlerken geçen süre.
+- **Erişilebilirlik:** Arayüz yakınlaştırma, mesaj yoğunluğu (Sıkışık / Küçük / Standart / Büyük), yüksek kontrast, altı çizili bağlantılar.
+- **Rozetler ve sürüm etiketi:** Kullanım alışkanlıklarına göre esprili rozetler (sayaçlar yalnızca senin bilgisayarında tutulur ve birkaç saatte bir profiline eklenir); profil kartında kullanılan YANKI sürümü.
+
 ## v1.5'te yenilikler
 
 - **Hafif mod varsayılan:** Sürekli animasyonlar ve canlı cam bulanıklığı kapalı, hareketli (GIF) avatarlar yalnızca üzerine gelince oynuyor, sesli kanalda değilken pencere gizlenince arayüz zamanlayıcıları yavaşlıyor. Test ortamında boşta işlemci kullanımı yaklaşık dörtte birine indi. Görsel efektler isteyenler için Ayarlar › Görünüm'de.
@@ -109,8 +119,8 @@ npm run start:2   # aynı bilgisayarda ikinci bir kullanıcıyla denemek için
 ## Kurulum dosyası üretme
 
 ```bash
-npm run dist:win   # Windows'ta → dist/YANKI-1.5.0-win-x64.exe ve kurulumsuz .zip
-npm run dist:mac   # macOS'ta  → dist/YANKI-1.5.0-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
+npm run dist:win   # Windows'ta → dist/YANKI-1.6.0-win-x64.exe ve kurulumsuz .zip
+npm run dist:mac   # macOS'ta  → dist/YANKI-1.6.0-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
 ```
 
 İki platformu birden derlemek için `v1.2.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derler, sürüm notlarını `renderer/changelog.js`'ten üretir ve Releases sayfasında yayınlar. Uygulamalar güncellemeyi bu sayfadan alır.
