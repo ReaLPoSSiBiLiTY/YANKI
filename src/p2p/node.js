@@ -164,6 +164,7 @@ class P2PNode extends EventEmitter {
     this.clockFix = 0 // bu bilgisayarın saat hatası (eşlerin ortak saatine göre), ms
     this.routes = new Map() // anahtar -> bize onun mesajlarını ileten eş (aktarmalı ses için)
     this.downloads = new Map()
+    this.traffic = new Map() // anahtar -> { rx, tx } (P2P bağlantısı üzerinden, bayt)
     this.on('activity', (e) => { if (e.from !== this.me) this.acts.set(e.from, { act: e.act, at: Date.now() }) })
   }
 
@@ -856,6 +857,19 @@ class P2PNode extends EventEmitter {
 
   // ---------- Ağ ----------
 
+  _traffic (key) {
+    let t = this.traffic.get(key)
+    if (!t) { t = { rx: 0, tx: 0 }; this.traffic.set(key, t) }
+    return t
+  }
+
+  // Kişi başına P2P trafiği (mesaj, dosya, aktarmalı ses). Ses/görüntü (WebRTC) arayüzde ayrıca sayılır.
+  netStats () {
+    const peers = {}
+    for (const [k, t] of this.traffic) peers[k] = { rx: t.rx, tx: t.tx, online: this.peers.has(k) }
+    return { peers }
+  }
+
   _peerCount (serverId) {
     let n = 0
     for (const p of this.peers.values()) if (p.shared.has(serverId)) n++
@@ -884,7 +898,10 @@ class P2PNode extends EventEmitter {
         get conn () { return this.conns[this.conns.length - 1] },
         send: (m) => {
           const c = peer.conns[peer.conns.length - 1]
-          try { if (c && !c.destroyed) c.write(JSON.stringify(m) + '\n') } catch {}
+          if (!c || c.destroyed) return
+          const line = JSON.stringify(m) + '\n'
+          this._traffic(key).tx += line.length
+          try { c.write(line) } catch {}
         }
       }
       this.peers.set(key, peer)
@@ -904,6 +921,7 @@ class P2PNode extends EventEmitter {
     let pending = []
     let pendingLen = 0
     conn.on('data', (chunk) => {
+      this._traffic(key).rx += chunk.length
       let start = 0
       let idx
       while ((idx = chunk.indexOf(10, start)) !== -1) {

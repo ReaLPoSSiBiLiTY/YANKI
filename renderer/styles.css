@@ -729,7 +729,9 @@ body.light .tile.avatar::before { backdrop-filter: blur(22px) brightness(1.1) sa
 .tile-label small { color: rgba(255, 255, 255, .72); }
 
 /* Performans modu: bulanıklık, animasyon ve geçiş yok */
-body.perf *, body.perf *::before, body.perf *::after { animation: none !important; transition: none !important; }
+body.perf *, body.perf *::before, body.perf *::after { animation: none !important; }
+body.perf .spinner { animation: spin .8s linear infinite !important; }
+body.perf .dots i { animation: dot 1.2s infinite !important; }
 body.perf .panel, body.perf .tile-label, body.perf .tile-act, body.perf #dock, body.perf .modal-back, body.perf .has-banner .sh-title, body.perf .tile.avatar::before { backdrop-filter: none !important; }
 body.perf #wall::before { filter: none !important; }
 body.perf .avw.speaking::after { display: none; }
@@ -981,3 +983,28 @@ body.locked #app { visibility: hidden; }
 
 /* Aktarmalı ses */
 .tile-relay { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 800; padding: 3px 9px; border-radius: 999px; background: rgba(255, 194, 75, .9); color: #241a00; white-space: nowrap; }
+
+/* ===================== v1.5 ===================== */
+.vc-net { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: 100%; margin-top: 8px; padding: 6px 8px; border-radius: 10px; font-size: 12px; font-weight: 700; color: var(--text-2); background: rgba(var(--fg-rgb), .04); text-align: left; }
+.vc-net:hover { background: rgba(var(--fg-rgb), .08); color: var(--text); }
+.vc-net span, #net-chip span { display: inline-flex; align-items: center; gap: 4px; }
+.vc-net small { width: 100%; font-weight: 600; color: var(--text-3); }
+#net-chip { position: absolute; left: 18px; bottom: 28px; z-index: 5; display: inline-flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 11px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 800; }
+#net-chip small { font-weight: 600; opacity: .75; }
+#net-chip:hover { background: rgba(0, 0, 0, .75); }
+.tile-rate { cursor: pointer; }
+.tile-vol { display: inline-flex !important; flex-direction: row !important; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 9px; background: rgba(0, 0, 0, .6); color: #fff; cursor: default; }
+.tile-vol input { width: 96px; accent-color: var(--accent); }
+.net-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.net-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); padding: 6px 8px; border-bottom: 1px solid rgba(var(--fg-rgb), .08); white-space: nowrap; }
+.net-table td { padding: 7px 8px; border-bottom: 1px solid rgba(var(--fg-rgb), .05); white-space: nowrap; }
+.net-table tfoot td { border-bottom: 0; border-top: 1px solid rgba(var(--fg-rgb), .12); }
+.net-table small { color: var(--text-3); }
+.nt-who { display: inline-flex; align-items: center; gap: 8px; max-width: 180px; }
+.nt-path { font-size: 11.5px; font-weight: 800; padding: 2px 8px; border-radius: 999px; background: rgba(var(--fg-rgb), .07); }
+.nt-path.connected { color: var(--green); background: rgba(61, 220, 132, .12); }
+.nt-path.relay { color: var(--yellow); background: rgba(255, 194, 75, .12); }
+.net-stats { overflow-x: auto; }
+.watch-offer small { font-size: 12px; }
+/* macOS koyu sistem görünümünde koyu logo */
+body.os-darwin.sysdark img[src="assets/mark.svg"] { content: url("assets/mark-dark.svg"); }

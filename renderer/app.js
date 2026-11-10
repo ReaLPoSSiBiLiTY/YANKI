@@ -6,12 +6,26 @@
    BOT_DEFS, botAvatar, botsIn, botEnabledIn, welcomeText, renderBotReply, renderPoll, renderCmdHints, handleMusicCommand, musicAdd, musicSkip, musicStop, MusicPlayer, openMusicPanel, openBotsModal, openBotCard,
    friendOf, friendStatusOf, isOnline, dmUnread, incomingCount, homeBadge, refreshDMs, renderHomeSidebar, renderHome, homeTabsHTML, activeNowHTML, dmProfileHTML, activityBlock, friendButton, renderDMComposer, friendAction, sendFriendCode, friendMoreMenu,
    throttleRaf, isLight, plainText, mentionsToNames, namesToMentions, mentionMap, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator,
+   fmtRate, netLine, openNetStats, refreshNetStats,
    stageFiles, stagedFilesHTML, takeStagedFiles, filesHTML, updateFileCards, downloadFileFrom, onFileProgress, openLink, fmtSize,
    GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, openMiniDM,
    startDM, closeMiniDM, bindMiniDM, miniOnDM, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew */
 
 // Ses arayüzü kare başına en fazla bir kez çizilir; pencere gizliyken (küçültülmüş, oyunun arkasında)
 // requestAnimationFrame beklediği için hiç çizilmez, görünür olunca bir kez çizilir.
+// İstatistikler 2 sn'de bir gelir; yalnızca ilgili küçük alanlar güncellenir
+function updateNetUI () {
+  if (S.winHidden) return
+  const line = $('#voice-card .vc-net')
+  if (line) line.innerHTML = netLine()
+  const chip = $('#net-chip')
+  const onStage = !$('#stage').hidden
+  chip.hidden = !onStage || !voice.active
+  if (!chip.hidden) chip.innerHTML = netLine()
+  if (onStage) renderStage()
+  refreshNetStats()
+}
+
 const drawVoice = throttleRaf(() => { if (S.winHidden) return; renderVoiceInSidebar(); renderVoiceCard(); renderDock(); renderStage(); renderHeader(); renderMeCard() })
 
 // =====================================================================
@@ -29,6 +43,8 @@ async function init () {
   if (r.clock) setTimeout(() => clockWarn(r.clock), 3000)
   S.canCreate = await api.canCreateServer?.().catch(() => false)
   document.body.classList.add('os-' + r.platform)
+  // Mac'te sistem görünümü (koyu logo için); ana süreç değişince 'sys-theme' gönderir
+  document.body.classList.toggle('sysdark', window.matchMedia('(prefers-color-scheme: dark)').matches)
   api.setCloseToTray?.(settings.closeToTray !== false)
 
   voice = new Voice({
@@ -44,6 +60,7 @@ async function init () {
   music = new MusicPlayer()
 
   api.on(onEvent)
+  voice.onStats = updateNetUI
   bindStatic()
   bindMentions()
   bindMiniDM()
@@ -144,6 +161,9 @@ async function onEvent (ev) {
       break
     case 'clock':
       clockWarn(ev.offset)
+      break
+    case 'sys-theme':
+      document.body.classList.toggle('sysdark', !!ev.dark)
       break
     case 'dm': {
       await refreshDMs()
@@ -567,6 +587,7 @@ function renderVoiceCard () {
       </div>
       <button class="ib hang" data-act="hangup" title="Bağlantıyı kes">${icon('phoneOff', 18)}</button>
     </div>
+    <button class="vc-net" data-act="net-stats" title="Bağlantı istatistikleri">${netLine()}</button>
     <div class="vc-btns">
       <button class="vb ${voice.screen ? 'live' : ''}" data-act="screen" title="${voice.screen ? 'Paylaşımı durdur' : 'Ekranını paylaş (1080p)'}">${icon(voice.screen ? 'screenOff' : 'screen', 18)}</button>
       <button class="vb ${voice.cam ? 'on' : ''}" data-act="camera" title="${voice.cam ? 'Kamerayı kapat' : 'Kamerayı aç'}">${icon(voice.cam ? 'video' : 'videoOff', 18)}</button>
@@ -1012,12 +1033,20 @@ function tileTop (t) {
   if (t.kind !== 'screen') return ''
   const n = (t.viewers || []).length
   const names = (t.viewers || []).map(k => nameOf(k)).join(', ')
-  return `<span class="tile-viewers" title="${esc(names || 'Henüz izleyen yok')}">${icon('eye', 14)} ${n}${t.self ? ' izleyici' : ''}</span>`
+  // Yayının anlık veri hızı: izlerken gelen, yayıncıyken toplam giden
+  const e = t.self ? voice.netTotals() : voice.net.get(t.key)
+  const rate = e ? (t.self ? `↑ ${fmtRate(e.txRate)}` : t.watching ? `↓ ${fmtRate(e.rxRate)}` : '') : ''
+  return `<span class="tile-viewers" title="${esc(names || 'Henüz izleyen yok')}">${icon('eye', 14)} ${n}${t.self ? ' izleyici' : ''}</span>${rate ? `<span class="tile-viewers tile-rate" data-act="net-stats" title="Bağlantı istatistikleri">${rate}${!t.self && e?.fps ? ` · ${Math.round(e.fps)} fps` : ''}</span>` : ''}`
 }
 
 function tileButtons (t) {
   let b = ''
-  if (t.kind === 'screen' && !t.self && t.watching) b += `<button class="tile-btn danger" data-act="unwatch" data-key="${t.key}" title="Yayını kapat">${icon('x', 15)}<span>Yayını Kapat</span></button>`
+  if (t.kind === 'screen' && !t.self && t.watching) {
+    // Ses düzeyi kaydırıcısı: değeri dizeye katılmaz ki sürüklerken yeniden çizilmesin
+    b += `<label class="tile-vol" title="Yayın sesi" data-key="${t.key}">${icon('volume', 15)}<input type="range" min="0" max="100" step="1" data-stream-vol="${t.key}"></label>`
+    b += `<button class="tile-btn danger" data-act="unwatch" data-key="${t.key}" title="Yayını kapat">${icon('x', 15)}<span>Yayını Kapat</span></button>`
+  }
+  if (t.kind === 'screen' && t.self) b += `<button class="tile-btn" data-act="self-preview" title="${voice.selfPreview ? 'Önizlemeyi kapat (daha az kaynak)' : 'Önizlemeyi göster'}">${icon(voice.selfPreview ? 'eyeOff' : 'eye', 15)}</button>`
   if (t.kind !== 'avatar' && t.kind !== 'music' && (t.stream || t.self)) b += `<button class="tile-btn" data-act="tile-full" title="Tam ekran">${icon('maximize', 16)}</button>`
   return b
 }
@@ -1037,7 +1066,12 @@ function updateTile (div, t, big, parts) {
   if (topEl._h !== top) { topEl.innerHTML = top; topEl._h = top }
   const btns = tileButtons(t)
   const bEl = $('.tile-btns', div)
-  if (bEl._h !== btns) { bEl.innerHTML = btns; bEl._h = btns }
+  if (bEl._h !== btns) {
+    bEl.innerHTML = btns
+    bEl._h = btns
+    const vol = $('[data-stream-vol]', bEl)
+    if (vol) vol.value = Math.round(voice.streamVolume(t.key) * 100)
+  }
 
   const media = $('.tile-media', div)
   let sig
@@ -1048,8 +1082,13 @@ function updateTile (div, t, big, parts) {
     if (media._sig !== sig) {
       const bad = t.conn && t.conn !== 'connected' && t.conn !== 'relay'
       media.innerHTML = `<div class="tile-av">${avatar(t.key, big ? 120 : 86)}</div>${act ? `<div class="tile-act">${actIcon(act, 16)}<span class="ellipsis">${esc(actText(act))}</span></div>` : ''}${t.conn === 'relay' ? `<div class="tile-relay" title="Doğrudan bağlantı kurulamadı; ses YANKI ağı üzerinden aktarılıyor. Görüntü ve yayın bu kişiyle paylaşılamaz.">${icon('signal', 13)} Aktarmalı ses</div>` : ''}${bad ? `<div class="tile-conn">${t.conn === 'failed' || t.conn === 'disconnected' ? 'Bağlantı onarılıyor…' : 'Bağlanıyor…'}<button class="btn small" data-act="peer-reconnect" data-key="${t.key}">${icon('signal', 14)} Yeniden bağlan</button></div>` : ''}`
-      if (pr?.banner && safeImg(pr.banner)) div.style.setProperty('--tile-bg', `url(${pr.banner})`); else div.style.removeProperty('--tile-bg')
+      if (pr?.banner && safeImg(pr.banner)) { div._gb = pr.banner; div.dataset.gb = '1'; div.style.setProperty('--tile-bg', `url(${stillOf(pr.banner)})`) } else div.style.removeProperty('--tile-bg')
       div.style.setProperty('--tile-accent', pr?.color || hashColor(t.key))
+    }
+  } else if (t.kind === 'screen' && t.self && !t.stream) {
+    sig = ['selfscreen', big].join('|')
+    if (media._sig !== sig) {
+      media.innerHTML = `<div class="watch-offer">${icon('screen', big ? 44 : 30)}<div><b>Ekranını paylaşıyorsun</b></div><small class="muted">Önizleme kapalı; bilgisayarın daha az yorulur.</small><button class="btn small" data-act="self-preview">${icon('eye', 14)} Önizlemeyi göster</button></div>`
     }
   } else if (t.kind === 'screen' && !t.self && !t.watching) {
     sig = ['offer', t.key, big].join('|')
@@ -1080,6 +1119,9 @@ function renderStage () {
   const stage = $('#stage')
   const show = S.mode === 'server' && S.view === 'stage' && voice.active && voice.server === S.server
   stage.hidden = !show
+  const chip = $('#net-chip')
+  chip.hidden = !show
+  if (show) chip.innerHTML = netLine()
   renderLayout()
   if (!show) return
   const tiles = voice.tiles()
@@ -1342,7 +1384,7 @@ function openProfileCard (key, anchor) {
   const html = `
     <div class="pcard" style="--accent-user:${p.color || hashColor(key)}">
       <div class="pc-banner" style="${banner ? `background-image:url(${banner})` : ''}"></div>
-      <div class="pc-av">${avatarFull(key, 84, { online: isOnline(key), badge: false })}</div>
+      <div class="pc-av">${avatarFull(key, 84, { online: isOnline(key), badge: false, anim: true })}</div>
       <div class="pc-body">
         <div class="pc-name">${esc(nameOf(key))}${p.pronouns ? `<small> · ${esc(p.pronouns)}</small>` : ''}</div>
         <button class="pc-key" data-act="copy-key" data-key="${key}" title="Arkadaş kodunu kopyala">${key.slice(0, 8)}…${key.slice(-6)} ${icon('copy', 11)}</button>
@@ -1562,8 +1604,8 @@ async function openSettings (tab = 'profile') {
           <label>Panel saydamlığı <input type="range" data-k="glass" min="0" max="60" value="${cur.glass}"></label>
           <p class="muted small">Arka plan ayarları resimli temalarda geçerlidir. Tema resimleri YANKI için kodla üretilmiş özgün çalışmalardır; hiçbir oyun, takım ya da markaya ait içerik kullanılmaz.</p>
           <h4>Performans</h4>
-          <label class="check"><input type="checkbox" id="ap-perf" ${cur.perf ? 'checked' : ''}> ${icon('zap', 16)} Performans modu</label>
-          <p class="muted small">Cam bulanıklığını, animasyonları ve geçiş efektlerini kapatır. Ekran kartı zayıf bilgisayarlarda ya da oyun oynarken önerilir.</p>
+          <label class="check"><input type="checkbox" id="ap-fx" ${cur.fx ? 'checked' : ''}> ${icon('sparkle', 16)} Görsel efektler (cam bulanıklığı ve animasyonlar)</label>
+          <p class="muted small">Kapalıyken (varsayılan) YANKI hafif modda çalışır: canlı bulanıklık ve sürekli animasyon olmaz, işlemci ve ekran kartı çok daha az kullanılır. Oyun oynarken kapalı tutman önerilir.</p>
         </div>`
       const commit = () => { applyTheme(settings.theme); saveSettings() }
       const uploadThemeImage = async () => {
@@ -1594,7 +1636,7 @@ async function openSettings (tab = 'profile') {
       $('#ap-accent-reset', pane)?.addEventListener('click', () => { delete settings.theme.accentOverride; commit(); show('appearance') })
       $$('[data-k]', pane).forEach(i => i.addEventListener('input', () => { settings.theme[i.dataset.k] = +i.value; commit() }))
       $$('[data-mode]', pane).forEach(b => b.addEventListener('click', () => { settings.theme.mode = b.dataset.mode; commit(); show('appearance') }))
-      $('#ap-perf', pane).addEventListener('change', e => { settings.theme.perf = e.target.checked; commit() })
+      $('#ap-fx', pane).addEventListener('change', e => { settings.theme.fx = e.target.checked; commit() })
     } else if (k === 'activity') {
       const a = settings.activity
       pane.innerHTML = `
@@ -1894,6 +1936,10 @@ function bindStatic () {
   })
   window.addEventListener('focus', markRead)
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { renderAll(); if (chatCtx()) reloadMessages('cur') } })
+  document.addEventListener('input', (e) => {
+    const r = e.target.closest?.('[data-stream-vol]')
+    if (r) voice.setStreamVolume(r.dataset.streamVol, +r.value / 100)
+  })
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) renderStage() })
 }
 
@@ -1920,7 +1966,7 @@ async function onClick (e) {
   const a = e.target.closest('[data-act]')
   if (!a) {
     const tile = e.target.closest('.tile')
-    if (tile && !e.target.closest('button')) { S.focusTile = S.focusTile === tile.dataset.tile ? null : tile.dataset.tile; renderStage() }
+    if (tile && !e.target.closest('button, input, label')) { S.focusTile = S.focusTile === tile.dataset.tile ? null : tile.dataset.tile; renderStage() }
     return
   }
   const act = a.dataset.act
@@ -1987,6 +2033,8 @@ async function onClick (e) {
       if (S.focusTile === 'screen:' + key) S.focusTile = null
       renderStage()
       break
+    case 'self-preview': e.stopPropagation(); voice.selfPreview = !voice.selfPreview; renderStage(); break
+    case 'net-stats': e.stopPropagation(); openNetStats(); break
     case 'peer-reconnect': e.stopPropagation(); voice.reconnect(key); toast('Bağlantı yeniden kuruluyor…', 2000); break
     case 'update': openUpdateModal(); break
     case 'pins': pinsPopup(a); break

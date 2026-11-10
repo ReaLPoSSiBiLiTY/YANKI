@@ -114,7 +114,7 @@ const settings = Object.assign({
   turnUser: '',
   turnPass: ''
 }, load('settings', {}))
-settings.theme = Object.assign({ id: 'yanki', dim: 45, blur: 0, glass: 30, mode: 'dark', perf: false }, settings.theme || {})
+settings.theme = Object.assign({ id: 'yanki', dim: 45, blur: 0, glass: 30, mode: 'dark', fx: false }, settings.theme || {})
 settings.activity = Object.assign({ enabled: true, custom: [] }, settings.activity || {})
 const saveSettings = () => save('settings', settings)
 
@@ -166,18 +166,57 @@ function actLine (key, cls = '') {
 }
 
 // data-speak öğesi konuşurken "yankı halkaları" çizer
+// Hareketli (GIF) avatarlar listelerde durağan gösterilir, üzerine gelince oynar.
+// Onlarca GIF'in aynı anda oynaması işlemciyi boşuna yoruyordu.
+const stillCache = new Map()
+function stillOf (src) {
+  if (!src || !src.startsWith('data:image/gif')) return src
+  const k = src.length + ':' + src.slice(-80)
+  const c = stillCache.get(k)
+  if (c) return c
+  if (c === undefined) {
+    stillCache.set(k, null)
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const w = Math.min(256, img.naturalWidth || 256)
+        const h = Math.round(w * (img.naturalHeight || 1) / (img.naturalWidth || 1))
+        const cv = document.createElement('canvas')
+        cv.width = w
+        cv.height = h
+        cv.getContext('2d').drawImage(img, 0, 0, w, h)
+        const png = cv.toDataURL('image/png')
+        stillCache.set(k, png)
+        for (const im of document.querySelectorAll('.avw img[data-gk]')) if (im.src.length === src.length && im.src === src && !im.matches(':hover')) im.src = png
+        for (const t of document.querySelectorAll('.tile[data-gb]')) if (t._gb === src) t.style.setProperty('--tile-bg', `url(${png})`)
+      } catch {}
+    }
+    img.src = src
+  }
+  return src
+}
+document.addEventListener('mouseover', (e) => {
+  const im = e.target.closest?.('.avw img[data-gk]')
+  if (!im) return
+  const a = safeImg(profileOf(im.dataset.gk)?.avatar)
+  if (!a || im.src === a) return
+  im.src = a
+  im.closest('.avw').addEventListener('mouseleave', () => { im.src = stillOf(a) }, { once: true })
+})
+
 function avatar (key, size = 40, extra = '') {
   const p = profileOf(key)
   const src = safeImg(p?.avatar)
+  const shown = src && !extra.includes('anim') ? stillOf(src) : src
   const inner = src
-    ? `<img src="${src}" alt="">`
+    ? `<img src="${shown}" alt=""${src.startsWith('data:image/gif') ? ` data-gk="${esc(key)}"` : ''}>`
     : `<span class="av-fallback" style="background:${hashColor(key)};font-size:${Math.round(size * 0.4)}px">${esc(initials(p?.name || key))}</span>`
   return `<span class="avw ${extra} ${voice?.speaking?.has(key) ? 'speaking' : ''}" data-speak="${esc(key)}" style="--s:${size}px">${inner}</span>`
 }
 
-function avatarFull (key, size = 40, { online = null, badge = true } = {}) {
+function avatarFull (key, size = 40, { online = null, badge = true, anim = false } = {}) {
   const act = badge ? activityOf(key) : null
-  return `<span class="avx" style="--s:${size}px">${avatar(key, size)}` +
+  return `<span class="avx" style="--s:${size}px">${avatar(key, size, anim ? 'anim' : '')}` +
     (online !== null ? `<i class="sdot ${online ? 'on' : ''}"></i>` : '') +
     (act ? `<i class="abadge ${act.type}" title="${esc(actText(act))}">${actIcon(act, Math.max(12, Math.round(size * 0.36)))}</i>` : '') +
     '</span>'

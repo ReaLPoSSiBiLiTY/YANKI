@@ -139,11 +139,14 @@ function applyTheme (cfg) {
   const blur = cfg?.blur ?? 0
   root.style.setProperty('--wall-blur', blur + 'px')
   root.style.setProperty('--wall-filter', blur > 0 ? `blur(${blur}px)` : 'none')
-  root.style.setProperty('--panel-a', hasImage ? String(1 - (cfg?.glass ?? 30) / 100) : '1')
+  // Görsel efektler kapalıyken (varsayılan) canlı bulanıklık yok; yazılar okunaklı kalsın diye paneller daha opak
+  const glassA = 1 - (cfg?.glass ?? 30) / 100
+  root.style.setProperty('--panel-a', hasImage ? String(cfg?.fx ? glassA : Math.max(0.9, glassA)) : '1')
   root.style.colorScheme = light ? 'light' : 'dark'
   document.body.classList.toggle('has-wall', hasImage)
   document.body.classList.toggle('light', light)
-  document.body.classList.toggle('perf', !!cfg?.perf)
+  // Hafif mod varsayılandır: sürekli animasyon ve canlı bulanıklık yok (işlemci/ekran kartı tasarrufu)
+  document.body.classList.toggle('perf', !cfg?.fx)
 }
 /* global settings */
 darkQuery.addEventListener?.('change', () => { if (typeof settings !== 'undefined' && settings.theme?.mode === 'system') applyTheme(settings.theme) })

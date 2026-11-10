@@ -53,6 +53,12 @@ class Voice {
     this.speaking = new Set()
     this.volumes = {}
     try { this.volumes = JSON.parse(localStorage.getItem('yanki.volumes') || '{}') } catch {}
+    // Yayın sesi (kişinin mikrofonundan ayrı)
+    this.streamVolumes = {}
+    try { this.streamVolumes = JSON.parse(localStorage.getItem('yanki.streamVolumes') || '{}') } catch {}
+    this.selfPreview = false // kendi yayınının önizlemesi (kapalıyken bilgisayar daha az yorulur)
+    this.net = new Map() // kişi -> { rx, tx, rxRate, txRate, rtt, path }
+    this._netPrev = new Map()
     this.ctx = null
     this.sink = document.createElement('div')
     this.sink.hidden = true
@@ -109,6 +115,7 @@ class Voice {
     this._broadcast()
     for (const [k, st] of this.states) if (this._inRoom(st)) this._ensurePeer(k, st.sess)
     this._sound('join')
+    this.api.setInVoice?.(true)
     this.onUpdate()
   }
 
@@ -126,6 +133,9 @@ class Voice {
     this._unwatch(this.me)
     this.server = null
     this.session = null
+    this.net.clear()
+    this._netPrev.clear()
+    this.api.setInVoice?.(false)
     if (!silent) this._sound('leave')
     this.onUpdate()
   }
@@ -142,7 +152,9 @@ class Voice {
       cam: this.cam?.id || null,
       screen: this.screen?.id || null,
       screenLabel: this.screen ? this.screenQuality.label : null,
-      watchers: this.screen ? [...this.watchers] : []
+      watchers: this.screen ? [...this.watchers] : [],
+      // Hangi yayınları izlediğimi de duyururum: izleyici sayısı, imza mesajı kaybolsa bile doğru kalır
+      watching: [...this.watching]
     }
   }
 
@@ -175,7 +187,9 @@ class Voice {
       }
     }
     if (this._updateRelay()) changed = true
+    if (this._healWatchers()) changed = true
     if (changed) this.onUpdate()
+    if (this.channel && (this._statTick = (this._statTick || 0) + 1) % 2 === 0) this._collectStats()
   }
 
   // P2P ağından gelen ses durumu
@@ -197,7 +211,7 @@ class Voice {
       this._sound('leave')
     }
     if (!st || !st.screen) this.watching.delete(from)
-    const significant = !prev || !st || prev.channel !== st.channel || prev.muted !== st.muted || prev.deaf !== st.deaf || prev.cam !== st.cam || prev.screen !== st.screen || (prev.watchers || []).length !== (st.watchers || []).length
+    const significant = !prev || !st || prev.channel !== st.channel || prev.muted !== st.muted || prev.deaf !== st.deaf || prev.cam !== st.cam || prev.screen !== st.screen || String(prev.watchers || []) !== String(st.watchers || []) || String(prev.watching || []) !== String(st.watching || [])
     if (significant) this.onUpdate()
   }
 
@@ -433,6 +447,7 @@ class Voice {
     if (!this.channel || this.watching.has(key)) return
     this.watching.add(key)
     this._askWatch(key, true)
+    this._broadcast()
     this.onUpdate()
   }
 
@@ -442,7 +457,40 @@ class Voice {
     const st = this.states.get(key)
     const p = this.peers.get(key)
     if (st?.screen && p) { this._stopAudio(key, st.screen); p.streams.delete(st.screen) }
+    this._broadcast()
     this.onUpdate()
+  }
+
+  // İzleyici sayısını kendi kendine onar: izleyicinin duyurduğu durum ile yayıncının listesi
+  // farklıysa (izleme isteği kaybolduysa) eşitle. İzleyici tarafında da yayıncı beni listede
+  // göstermiyorsa isteği yeniden gönder.
+  _healWatchers () {
+    let changed = false
+    const now = Date.now()
+    if (this.screen) {
+      for (const [k, st] of this.states) {
+        if (!this._inRoom(st) || !this.peers.has(k)) continue
+        const says = Array.isArray(st.watching) && st.watching.includes(this.me)
+        if (says && !this.watchers.has(k)) { this._setWatcher(k, true); changed = true }
+      }
+    }
+    for (const key of this.watching) {
+      const st = this.states.get(key)
+      if (!st?.screen || !this.peers.has(key)) continue
+      const listed = Array.isArray(st.watchers) && st.watchers.includes(this.me)
+      if (!listed && now - (this._watchAsk.get(key) || 0) > 5000) this._askWatch(key, true)
+    }
+    return changed
+  }
+
+  // Bir yayını izleyenler: yayıncının listesi ile "izliyorum" diyenlerin birleşimi
+  viewersOf (key) {
+    const set = new Set()
+    const own = key === this.me
+    for (const k of (own ? this.watchers : this.states.get(key)?.watchers || [])) set.add(k)
+    for (const [k, st] of this.states) if (this._inRoom(st) && Array.isArray(st.watching) && st.watching.includes(key)) set.add(k)
+    if (!own && this.watching.has(key)) set.add(this.me)
+    return [...set]
   }
 
   // Yayıncı tarafı: izleyici ekle/çıkar, ekran izini yalnızca ona gönder
@@ -523,7 +571,16 @@ class Voice {
   setUserVolume (key, v) {
     this.volumes[key] = v
     try { localStorage.setItem('yanki.volumes', JSON.stringify(this.volumes)) } catch {}
-    for (const [k, el] of this.audioEls) if (k.startsWith(key + ':')) el.volume = Math.max(0, Math.min(1, v))
+    for (const [k, el] of this.audioEls) if (k.startsWith(key + ':') && !el._screen) el.volume = Math.max(0, Math.min(1, v))
+  }
+
+  streamVolume (key) { return this.streamVolumes[key] ?? 1 }
+
+  setStreamVolume (key, v) {
+    v = Math.max(0, Math.min(1, v))
+    this.streamVolumes[key] = v
+    try { localStorage.setItem('yanki.streamVolumes', JSON.stringify(this.streamVolumes)) } catch {}
+    for (const [k, el] of this.audioEls) if (k.startsWith(key + ':') && el._screen) el.volume = v
   }
 
   _playAudio (key, stream) {
@@ -533,7 +590,9 @@ class Voice {
     el.autoplay = true
     el.srcObject = stream
     el.muted = this.deaf
-    el.volume = this.volumes[key] ?? 1
+    const stNow = this.states.get(key)
+    el._screen = !!(stNow?.screen && stNow.screen === stream.id) || stream.getVideoTracks().length > 0
+    el.volume = el._screen ? this.streamVolume(key) : (this.volumes[key] ?? 1)
     const out = this.settings().outputDevice
     if (out && out !== 'default' && el.setSinkId) el.setSinkId(out).catch(() => {})
     this.sink.appendChild(el)
@@ -715,6 +774,52 @@ class Voice {
     return s !== 'connected' && (p.relay || this.relay?.receiving(key)) ? 'relay' : s
   }
 
+  // ---------- Trafik istatistikleri ----------
+  // WebRTC (ses/görüntü/yayın) baytları getStats'tan; P2P (mesaj, dosya, aktarmalı ses) baytları
+  // ana süreçten alınır. Hızlar iki ölçüm arasındaki farktan hesaplanır.
+  async _collectStats () {
+    if (this._collecting) return
+    this._collecting = true
+    try {
+      const node = (await this.api.netStats?.().catch(() => null))?.peers || {}
+      const now = performance.now()
+      for (const p of this.peers.values()) {
+        let rx = 0
+        let tx = 0
+        let rtt = null
+        let fps = null
+        try {
+          const rep = await p.pc.getStats()
+          rep.forEach(r => {
+            if (r.type === 'transport') { rx += r.bytesReceived || 0; tx += r.bytesSent || 0 }
+            if (r.type === 'candidate-pair' && (r.nominated || r.selected) && r.state === 'succeeded' && Number.isFinite(r.currentRoundTripTime)) rtt = Math.round(r.currentRoundTripTime * 1000)
+            if (r.type === 'inbound-rtp' && r.kind === 'video' && Number.isFinite(r.framesPerSecond)) fps = Math.max(fps || 0, r.framesPerSecond)
+          })
+        } catch {}
+        const n = node[p.key] || { rx: 0, tx: 0 }
+        const tot = { rx: rx + n.rx, tx: tx + n.tx }
+        const prev = this._netPrev.get(p.key)
+        const dt = prev ? (now - prev.t) / 1000 : 0
+        const e = {
+          rx: tot.rx, tx: tot.tx,
+          rxRate: prev && dt > 0 ? Math.max(0, (tot.rx - prev.rx) / dt) : 0,
+          txRate: prev && dt > 0 ? Math.max(0, (tot.tx - prev.tx) / dt) : 0,
+          rtt, fps, path: this.peerState(p.key)
+        }
+        this._netPrev.set(p.key, { t: now, rx: tot.rx, tx: tot.tx })
+        this.net.set(p.key, e)
+      }
+      for (const k of [...this.net.keys()]) if (!this.peers.has(k)) { this.net.delete(k); this._netPrev.delete(k) }
+      this.onStats?.()
+    } finally { this._collecting = false }
+  }
+
+  netTotals () {
+    const t = { rx: 0, tx: 0, rxRate: 0, txRate: 0 }
+    for (const e of this.net.values()) { t.rx += e.rx; t.tx += e.tx; t.rxRate += e.rxRate; t.txRate += e.txRate }
+    return t
+  }
+
   participants (server, channel) {
     const list = []
     if (this.server === server && this.channel === channel) {
@@ -731,7 +836,7 @@ class Voice {
     const out = []
     for (const p of this.participants(this.server, this.channel)) {
       if (p.self) {
-        if (this.screen) out.push({ id: 'screen:' + p.key, key: p.key, kind: 'screen', stream: this.screen, self: true, label: this.screenQuality.label, viewers: [...this.watchers], watching: true })
+        if (this.screen) out.push({ id: 'screen:' + p.key, key: p.key, kind: 'screen', stream: this.selfPreview ? this.screen : null, self: true, label: this.screenQuality.label, viewers: this.viewersOf(this.me), watching: true })
         if (this.cam) out.push({ id: 'cam:' + p.key, key: p.key, kind: 'cam', stream: this.cam, self: true })
         if (!this.cam) out.push({ id: 'av:' + p.key, key: p.key, kind: 'avatar', self: true })
         continue
@@ -739,7 +844,7 @@ class Voice {
       const peer = this.peers.get(p.key)
       if (p.screen) {
         const watching = this.watching.has(p.key)
-        out.push({ id: 'screen:' + p.key, key: p.key, kind: 'screen', stream: watching ? (peer?.streams.get(p.screen) || null) : null, label: p.screenLabel, viewers: p.watchers || [], watching })
+        out.push({ id: 'screen:' + p.key, key: p.key, kind: 'screen', stream: watching ? (peer?.streams.get(p.screen) || null) : null, label: p.screenLabel, viewers: this.viewersOf(p.key), watching })
       }
       if (p.cam) out.push({ id: 'cam:' + p.key, key: p.key, kind: 'cam', stream: peer?.streams.get(p.cam) || null })
       else out.push({ id: 'av:' + p.key, key: p.key, kind: 'avatar', conn: p.conn })

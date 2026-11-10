@@ -883,4 +883,55 @@ function openLink (url) {
   })
 }
 
-Object.assign(window, { stageFiles, stagedFilesHTML, takeStagedFiles, filesHTML, updateFileCards, downloadFileFrom, onFileProgress, openLink, fmtSize, GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })
+// =====================================================================
+// Trafik istatistikleri
+// =====================================================================
+function fmtRate (bps) {
+  if (!Number.isFinite(bps) || bps < 1) return '0 KB/sn'
+  if (bps < 1024 * 1024) return (bps / 1024).toFixed(bps < 10240 ? 1 : 0) + ' KB/sn'
+  return (bps / 1024 / 1024).toFixed(1) + ' MB/sn'
+}
+
+function netLine () {
+  const t = voice.netTotals()
+  return `<span>${icon('download', 13)} ${fmtRate(t.rxRate)}</span><span>${icon('upload', 13)} ${fmtRate(t.txRate)}</span><small>Toplam ↓ ${fmtSize(t.rx)} · ↑ ${fmtSize(t.tx)}</small>`
+}
+
+const PATH_LABEL = { connected: 'Doğrudan', relay: 'Aktarmalı', new: 'Bağlanıyor', connecting: 'Bağlanıyor', disconnected: 'Onarılıyor', failed: 'Onarılıyor', closed: '—' }
+
+let netModal = null
+function netStatsHTML () {
+  const rows = [...voice.net.entries()].sort((a, b) => b[1].rxRate + b[1].txRate - a[1].rxRate - a[1].txRate)
+  const t = voice.netTotals()
+  if (!voice.active) return '<p class="muted">İstatistikler sesli kanaldayken ölçülür.</p>'
+  return `
+    <table class="net-table">
+      <thead><tr><th>Kişi</th><th>Yol</th><th>Gecikme</th><th>↓ Alınan</th><th>↑ Giden</th><th>↓ Toplam</th><th>↑ Toplam</th></tr></thead>
+      <tbody>
+        ${rows.map(([k, e]) => `<tr>
+          <td><span class="nt-who">${avatar(k, 22)}<span class="ellipsis">${esc(nameOf(k))}</span></span></td>
+          <td><span class="nt-path ${e.path}">${PATH_LABEL[e.path] || e.path}</span></td>
+          <td>${e.rtt != null ? e.rtt + ' ms' : '—'}</td>
+          <td>${fmtRate(e.rxRate)}${e.fps ? `<small> · ${Math.round(e.fps)} fps</small>` : ''}</td>
+          <td>${fmtRate(e.txRate)}</td>
+          <td>${fmtSize(e.rx)}</td>
+          <td>${fmtSize(e.tx)}</td>
+        </tr>`).join('') || '<tr><td colspan="7" class="muted">Kanalda başka kimse yok.</td></tr>'}
+      </tbody>
+      <tfoot><tr><td colspan="3"><b>Toplam</b></td><td><b>${fmtRate(t.rxRate)}</b></td><td><b>${fmtRate(t.txRate)}</b></td><td><b>${fmtSize(t.rx)}</b></td><td><b>${fmtSize(t.tx)}</b></td></tr></tfoot>
+    </table>
+    <p class="muted small">Ses, görüntü ve yayın (WebRTC) ile bu kişiyle YANKI bağlantısı üzerinden giden mesaj, dosya ve aktarmalı ses dahildir; 2 saniyede bir güncellenir. "Toplam", bu sesli kanala girdiğinden beri bu kişilerle olan trafiktir.</p>`
+}
+
+function openNetStats () {
+  const body = el(`<div class="net-stats">${netStatsHTML()}</div>`)
+  netModal = openModal({ title: 'Bağlantı istatistikleri', body, wide: true, onClose: () => { netModal = null } })
+}
+
+function refreshNetStats () {
+  if (!netModal) return
+  const box = $('.net-stats', netModal.node)
+  if (box) box.innerHTML = netStatsHTML()
+}
+
+Object.assign(window, { fmtRate, netLine, openNetStats, refreshNetStats, stageFiles, stagedFilesHTML, takeStagedFiles, filesHTML, updateFileCards, downloadFileFrom, onFileProgress, openLink, fmtSize, GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })

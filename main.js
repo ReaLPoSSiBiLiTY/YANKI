@@ -1,5 +1,5 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, Notification, systemPreferences, net, Menu, Tray, nativeImage, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, desktopCapturer, session, shell, Notification, systemPreferences, net, Menu, Tray, nativeImage, dialog, nativeTheme } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { P2PNode } = require('./src/p2p/node')
@@ -59,14 +59,30 @@ function showWindow () {
   win.focus()
 }
 
-function createTray () {
-  if (tray) return
-  const src = nativeImage.createFromPath(path.join(__dirname, 'renderer', 'assets', 'icon.png'))
+// macOS: sistem koyu moddayken Dock ve menü çubuğu simgesi koyu sürüme geçer (açık modda mevcut simge)
+const macDark = () => process.platform === 'darwin' && nativeTheme.shouldUseDarkColors
+const iconPath = (dark) => path.join(__dirname, 'renderer', 'assets', dark ? 'icon-dark.png' : 'icon.png')
+
+function trayImage (dark) {
+  const src = nativeImage.createFromPath(iconPath(dark))
   const size = process.platform === 'darwin' ? 18 : 16
   const img = nativeImage.createEmpty()
   img.addRepresentation({ scaleFactor: 1, buffer: src.resize({ width: size, height: size, quality: 'best' }).toPNG() })
   img.addRepresentation({ scaleFactor: 2, buffer: src.resize({ width: size * 2, height: size * 2, quality: 'best' }).toPNG() })
-  tray = new Tray(img)
+  return img
+}
+
+function applyMacIcons () {
+  if (process.platform !== 'darwin') return
+  const dark = macDark()
+  try { app.dock?.setIcon(nativeImage.createFromPath(iconPath(dark))) } catch {}
+  try { tray?.setImage(trayImage(dark)) } catch {}
+  send({ type: 'sys-theme', dark })
+}
+
+function createTray () {
+  if (tray) return
+  tray = new Tray(trayImage(macDark()))
   tray.setToolTip(APP_NAME)
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'YANKI\'yı aç', click: showWindow },
@@ -98,7 +114,7 @@ function createWindow () {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false // arka planda da ses/görüntü kesintisiz kalsın
+      backgroundThrottling: true // sesli kanaldayken arayüz kapatır (app:inVoice), diğer zamanlarda gizliyken daha az işlemci
     }
   })
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'))
@@ -174,6 +190,9 @@ function registerIpc () {
   h('p2p:createServer', (name, icon) => node.createServer(name, icon))
   h('p2p:join', (code) => node.joinServer(String(code || '').trim()))
   h('p2p:canCreate', () => node.canCreateServer())
+  h('net:stats', () => node.netStats())
+  // Sesli kanalda değilken pencere gizlenince zamanlayıcılar yavaşlasın (daha az işlemci)
+  ipcMain.on('app:inVoice', (_e, on) => { try { win?.webContents.setBackgroundThrottling(!on) } catch {} })
   // Dosya paylaşımı
   h('file:share', (p, ctx) => node.shareFile(String(p), ctx))
   h('file:has', (hh) => node.hasFile(hh))
@@ -421,6 +440,8 @@ app.whenReady().then(async () => {
   registerIpc()
   createWindow()
   try { createTray() } catch (e) { console.error('tray', e) }
+  applyMacIcons()
+  nativeTheme.on('updated', applyMacIcons)
   activity.start()
 
   updater = new Updater(app, net, shell, UPDATE_REPO)

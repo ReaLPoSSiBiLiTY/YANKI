@@ -3,6 +3,19 @@
 // (scripts/release-notes.js) bu listeden üretilir. Yeni sürümde en üste ekle.
 const CHANGELOG = [
   {
+    version: '1.5.0',
+    date: '2026-11-10',
+    title: 'Hafif YANKI, bağlantı istatistikleri ve yayın sesi',
+    items: [
+      { icon: 'zap', title: 'Çok daha hafif', desc: 'YANKI artık varsayılan olarak hafif modda: sürekli animasyon ve canlı cam bulanıklığı yok, hareketli avatarlar yalnızca üzerine gelince oynuyor, sesli kanalda değilken arka planda neredeyse hiç çalışmıyor. Görsel efektler Ayarlar › Görünüm\'den açılabilir.' },
+      { icon: 'screen', title: 'Yayıncı için daha az yük', desc: 'Kendi yayınının önizlemesi varsayılan olarak kapalı; bilgisayarın kendi ekranını ikinci kez çizmekle uğraşmıyor. İstersen yayın kutusundan açabilirsin.' },
+      { icon: 'eye', title: 'İzleyici sayısı düzeltildi', desc: 'İzleyiciler hangi yayını izlediklerini de duyuruyor; izleme isteği yolda kaybolsa bile sayaç kendiliğinden düzeliyor ve yayın gelmeye başlıyor.' },
+      { icon: 'activity', title: 'Bağlantı istatistikleri', desc: 'Ses kartında ve sahnenin köşesinde anlık alınan/giden veri ile toplamlar görünüyor. Tıklayınca kişi kişi gecikme, bağlantı yolu, hız ve toplam trafik tablosu açılıyor. Yayın kutusunda da yayının anlık hızı ve kare sayısı var.' },
+      { icon: 'volume', title: 'Yayın sesi', desc: 'İzlediğin yayının sesini, kişinin mikrofonundan bağımsız olarak yayın kutusundaki kaydırıcıyla ayarla.' },
+      { icon: 'moon', title: 'macOS koyu simge', desc: 'Mac\'te sistem koyu moddayken Dock ve menü çubuğu simgesi ile uygulama içi logo koyu sürüme geçiyor; açık modda eskisi gibi.' }
+    ]
+  },
+  {
     version: '1.4.0',
     date: '2026-11-09',
     title: 'Dosya paylaşımı ve daha sağlam ses',

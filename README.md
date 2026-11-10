@@ -46,6 +46,15 @@ Topluluğun yalnızca üyelerinin bilgisayarlarında yaşar; herkes birbirine do
   </tr>
 </table>
 
+## v1.5'te yenilikler
+
+- **Hafif mod varsayılan:** Sürekli animasyonlar ve canlı cam bulanıklığı kapalı, hareketli (GIF) avatarlar yalnızca üzerine gelince oynuyor, sesli kanalda değilken pencere gizlenince arayüz zamanlayıcıları yavaşlıyor. Test ortamında boşta işlemci kullanımı yaklaşık dörtte birine indi. Görsel efektler isteyenler için Ayarlar › Görünüm'de.
+- **Yayıncı önizlemesi kapalı:** Kendi yayınının önizlemesi varsayılan olarak çizilmiyor (test ortamında yayıncı tarafında ~%20 daha az işlemci).
+- **İzleyici sayacı:** İzleyiciler izledikleri yayınları ses durumlarında duyuruyor; yayıncı ile izleyici listesi farklıysa kendiliğinden eşitleniyor.
+- **Bağlantı istatistikleri:** Kişi başına gecikme, bağlantı yolu (doğrudan / aktarmalı), anlık hız ve toplam trafik; ses kartında, sahne köşesinde ve yayın kutusunda.
+- **Yayın sesi kaydırıcısı:** İzlenen yayının sesi kişinin mikrofon sesinden bağımsız ayarlanır.
+- **macOS koyu simge:** Sistem koyu moddayken Dock, menü çubuğu ve uygulama içi logo koyu sürüme geçer.
+
 ## v1.4'te yenilikler
 
 - **Dosya paylaşımı:** 2 GB'a kadar her türlü dosya. İçerik merkezi bir yere yüklenmez; indiren kişi dosyayı doğrudan paylaşandan (ya da onu daha önce indirmiş bir üyeden) parça parça alır ve SHA-256 özetiyle doğrular. Dosyayı yalnızca paylaşıldığı kanala ya da özel sohbete erişimi olanlar indirebilir.
@@ -100,8 +109,8 @@ npm run start:2   # aynı bilgisayarda ikinci bir kullanıcıyla denemek için
 ## Kurulum dosyası üretme
 
 ```bash
-npm run dist:win   # Windows'ta → dist/YANKI-1.4.0-win-x64.exe ve kurulumsuz .zip
-npm run dist:mac   # macOS'ta  → dist/YANKI-1.4.0-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
+npm run dist:win   # Windows'ta → dist/YANKI-1.5.0-win-x64.exe ve kurulumsuz .zip
+npm run dist:mac   # macOS'ta  → dist/YANKI-1.5.0-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
 ```
 
 İki platformu birden derlemek için `v1.2.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derler, sürüm notlarını `renderer/changelog.js`'ten üretir ve Releases sayfasında yayınlar. Uygulamalar güncellemeyi bu sayfadan alır.

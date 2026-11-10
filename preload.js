@@ -34,6 +34,8 @@ contextBridge.exposeInMainWorld('yanki', {
   activityCurrent: () => inv('activity:current'),
   activities: () => inv('activity:all'),
   canCreateServer: () => inv('p2p:canCreate'),
+  netStats: () => inv('net:stats'),
+  setInVoice: (on) => snd('app:inVoice', on),
   pathForFile: (f) => { try { return webUtils.getPathForFile(f) || '' } catch { return '' } },
   shareFile: (p, ctx) => inv('file:share', p, ctx),
   hasFile: (h) => inv('file:has', h),
