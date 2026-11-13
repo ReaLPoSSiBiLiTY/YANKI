@@ -47,9 +47,11 @@ const KNOWN = {
 }
 
 // "SomeGame-Win64-Shipping" / "SomeGame-WinGDK-Shipping" → "Some Game" (Unreal Engine oyunları)
+// Oyun olmayan Unreal yardımcıları (ör. Epic Online Services katmanı: EOSOverlayRenderer-Win64-Shipping)
+const UNREAL_HELPER = /overlay|renderer|crash|cef|webhelper|helper|launcher|bootstrap|service|updater|prereq|anticheat|reporter|^eos|^epic|editor|server$/i
 function unrealName (n) {
   const m = n.match(/^(.+?)[-_](win64|wingdk|wingdk64)[-_]shipping$/i)
-  if (!m) return null
+  if (!m || UNREAL_HELPER.test(m[1])) return null
   const base = m[1].replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z0-9])/g, '$1 $2').trim()
   return base.length >= 2 ? base.replace(/\b\w/g, c => c.toUpperCase()) : null
 }
@@ -182,7 +184,8 @@ class ActivityDetector {
     this.onChange(act)
   }
 
-  _matchGame (procName, file, title) {
+  // loose: tahmine dayalı eşleşmeye (Unreal süreç adı) izin ver
+  _matchGame (procName, file, title, loose = true) {
     const n = procName.toLowerCase().replace(/\.exe$/, '')
     if (IGNORE_PROC.has(n)) return null
     const custom = this.custom.find(c => c.exe === n)
@@ -190,10 +193,12 @@ class ActivityDetector {
     if (KNOWN[n]) return KNOWN[n]
     const xb = this.xbox.get(n)
     if (xb) return xb.name
-    const ue = unrealName(n)
-    if (ue && !IGNORE_PROC.has(n)) return ue
     if ((n === 'javaw' || n === 'java') && /^Minecraft/i.test(title || '')) return 'Minecraft'
-    return gameFromPath(file)
+    const viaPath = gameFromPath(file)
+    if (viaPath) return viaPath
+    if (!loose) return null
+    const ue = unrealName(n)
+    return ue && !IGNORE_PROC.has(n) ? ue : null
   }
 
   async poll () {
@@ -223,15 +228,15 @@ class ActivityDetector {
       const m = line.match(/^"([^"]+)"/)
       if (m) names.add(m[1])
     }
-    for (const exe of names) {
-      const game = this._matchGame(exe, null, '')
-      if (game) {
-        const xb = this.xbox.get(exe.toLowerCase().replace(/\.exe$/, ''))
-        return { type: 'game', name: game, icon: xb ? await this._icon(xb.file) : await this._winIcon(exe), since: Date.now(), store: xb ? 'Xbox' : undefined }
-      }
+    const found = async (exe, game) => {
+      const xb = this.xbox.get(exe.toLowerCase().replace(/\.exe$/, ''))
+      return { type: 'game', name: game, icon: xb ? await this._icon(xb.file) : await this._winIcon(exe), since: Date.now(), store: xb ? 'Xbox' : undefined }
     }
+    // Önce kesin eşleşmeler (bilinen oyunlar, Xbox, özel), sonra Steam, en son tahmin (Unreal süreç adı)
+    for (const exe of names) { const game = this._matchGame(exe, null, '', false); if (game) return found(exe, game) }
     const steam = await this._steamGame()
     if (steam) return { type: 'game', name: steam.name, icon: steam.icon, since: Date.now() }
+    for (const exe of names) { const game = this._matchGame(exe, null, ''); if (game) return found(exe, game) }
     const spotify = [...names].find(n => n.toLowerCase() === 'spotify.exe')
     if (spotify) {
       const v = await run('tasklist', ['/v', '/fo', 'csv', '/nh', '/fi', 'imagename eq Spotify.exe'], 6000)

@@ -3,6 +3,14 @@
 // (scripts/release-notes.js) bu listeden üretilir. Yeni sürümde en üste ekle.
 const CHANGELOG = [
   {
+    version: '1.6.6',
+    date: '2026-11-13',
+    title: 'Oyun adı düzeltmesi',
+    items: [
+      { icon: 'gamepad', title: '"Eosoverlayrenderer oynuyor" düzeltildi', desc: 'Epic Online Services kullanan oyunlarda (Steam\'dekiler dahil) arka plandaki katman programı oyun sanılıyordu. Artık gerçek oyunun adı görünüyor; bilinen oyunlar ve Steam her zaman tahmine göre önce geliyor.' }
+    ]
+  },
+  {
     version: '1.6.5',
     date: '2026-11-13',
     title: 'Bas-Konuş, küçük pencere ve sesli duyurular',

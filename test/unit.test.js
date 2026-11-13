@@ -31,9 +31,13 @@ assert.strictEqual(sanitizeProfile({ name: 'x', ver: '<b>1.6</b>' }, 1).ver, nul
 
 // Oyun algılama: Unreal süreç adları ve Xbox/Game Pass
 const { unrealName, ActivityDetector } = require('../src/activity')
+const det0 = () => new ActivityDetector({}, () => {})
 assert.strictEqual(unrealName('Hogwarts_Legacy-Win64-Shipping'), 'Hogwarts Legacy')
 assert.strictEqual(unrealName('palworld-wingdk-shipping'), 'Palworld')
 assert.strictEqual(unrealName('notepad'), null)
+assert.strictEqual(unrealName('EOSOverlayRenderer-Win64-Shipping'), null)
+assert.strictEqual(unrealName('CrashReportClient-Win64-Shipping'), null)
+assert.strictEqual(det0()._matchGame('EOSOverlayRenderer-Win64-Shipping.exe'), null)
 const det = new ActivityDetector({}, () => {})
 det.xbox.set('somegame', { name: 'Bir Game Pass Oyunu', file: 'x' })
 assert.strictEqual(det._matchGame('SomeGame.exe'), 'Bir Game Pass Oyunu')
