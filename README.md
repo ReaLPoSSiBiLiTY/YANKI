@@ -128,8 +128,8 @@ npm run start:2   # aynı bilgisayarda ikinci bir kullanıcıyla denemek için
 ## Kurulum dosyası üretme
 
 ```bash
-npm run dist:win   # Windows'ta → dist/YANKI-1.6.6-win-x64.exe ve kurulumsuz .zip
-npm run dist:mac   # macOS'ta  → dist/YANKI-1.6.6-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
+npm run dist:win   # Windows'ta → dist/YANKI-1.6.7-win-x64.exe ve kurulumsuz .zip
+npm run dist:mac   # macOS'ta  → dist/YANKI-1.6.7-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
 ```
 
 İki platformu birden derlemek için `v1.2.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derler, sürüm notlarını `renderer/changelog.js`'ten üretir ve Releases sayfasında yayınlar. Uygulamalar güncellemeyi bu sayfadan alır.

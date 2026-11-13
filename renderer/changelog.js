@@ -3,6 +3,14 @@
 // (scripts/release-notes.js) bu listeden üretilir. Yeni sürümde en üste ekle.
 const CHANGELOG = [
   {
+    version: '1.6.7',
+    date: '2026-11-13',
+    title: 'Oyun simgeleri düzeltmesi',
+    items: [
+      { icon: 'gamepad', title: 'Oyun simgeleri geri geldi', desc: 'Bazı oyunlarda (ör. Diablo IV gibi Battle.net oyunları) oyunun simgesi yerine Windows\'un boş "uygulama" simgesi görünüyordu. Simge artık oyunun kendi dosyasından doğrudan alınıyor.' }
+    ]
+  },
+  {
     version: '1.6.6',
     date: '2026-11-13',
     title: 'Oyun adı düzeltmesi',

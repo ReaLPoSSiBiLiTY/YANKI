@@ -114,10 +114,33 @@ function scanXboxGames () {
 const IGNORE_DIRS = new Set(['steamworks shared', 'steamvr', 'steam controller configs', 'proton', 'steam linux runtime', 'launcher', 'directxredist', 'riot client', 'epic online services'])
 const IGNORE_PROC = new Set(['steam', 'steamwebhelper', 'epicgameslauncher', 'explorer', 'yanki', 'electron', 'riotclientservices', 'riotclientux', 'galaxyclient', 'eadesktop', 'battle.net', 'unitycrashhandler64', 'crashreportclient'])
 
-function run (cmd, args, timeout = 8000) {
+function run (cmd, args, timeout = 8000, env) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (err, out) => resolve(err ? '' : String(out || '')))
+    execFile(cmd, args, { timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8', env: env ? { ...process.env, ...env } : undefined }, (err, out) => resolve(err ? '' : String(out || '')))
   })
+}
+
+// Windows: .exe dosyasının içindeki simgeyi PowerShell ile PNG olarak çıkar. Electron'un
+// getFileIcon'u bazı oyunlarda (ör. Battle.net oyunları) Windows'un genel "uygulama" simgesini
+// döndürüyordu. Dosya yolu komuta yazılmaz, ortam değişkeniyle verilir (tırnak/enjeksiyon olmaz).
+const PS_ICON = `
+$p = $env:YANKI_ICON_PATH
+if (-not $p -and $env:YANKI_ICON_PROC) { $p = (Get-Process -Name $env:YANKI_ICON_PROC -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1).Path }
+if ($p) {
+  Write-Output "PATH:$p"
+  try {
+    Add-Type -AssemblyName System.Drawing
+    $i = [System.Drawing.Icon]::ExtractAssociatedIcon($p)
+    $b = $i.ToBitmap(); $m = New-Object System.IO.MemoryStream
+    $b.Save($m, [System.Drawing.Imaging.ImageFormat]::Png)
+    Write-Output ("PNG:" + [Convert]::ToBase64String($m.ToArray()))
+  } catch {}
+}`
+async function psIcon ({ file, proc }) {
+  const out = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', PS_ICON], 10000, { YANKI_ICON_PATH: file || '', YANKI_ICON_PROC: proc || '' })
+  const path = out.match(/^PATH:(.+)$/m)?.[1]?.trim() || null
+  const b64 = out.match(/^PNG:([A-Za-z0-9+/=]+)\s*$/m)?.[1] || null
+  return { path, png: b64 ? Buffer.from(b64, 'base64') : null }
 }
 
 function gameFromPath (p) {
@@ -164,14 +187,29 @@ class ActivityDetector {
 
   stop () { clearInterval(this.timer) }
 
+  _pngToData (buf) {
+    try {
+      const { nativeImage } = require('electron')
+      const img = nativeImage.createFromBuffer(buf)
+      if (!img.isEmpty()) return img.resize({ width: 32, height: 32, quality: 'best' }).toDataURL()
+    } catch {}
+    return null
+  }
+
   async _icon (file) {
     if (!file) return null
     if (this.iconCache.has(file)) return this.iconCache.get(file)
     let data = null
-    try {
-      const img = await this.app.getFileIcon(file, { size: 'normal' })
-      if (!img.isEmpty()) data = img.resize({ width: 32, height: 32 }).toDataURL()
-    } catch {}
+    if (process.platform === 'win32' && /\.exe$/i.test(file)) {
+      const r = await psIcon({ file })
+      if (r.png) data = this._pngToData(r.png)
+    }
+    if (!data) {
+      try {
+        const img = await this.app.getFileIcon(file, { size: 'normal' })
+        if (!img.isEmpty()) data = img.resize({ width: 32, height: 32 }).toDataURL()
+      } catch {}
+    }
     this.iconCache.set(file, data)
     return data
   }
@@ -259,9 +297,10 @@ class ActivityDetector {
     this.iconCache.set(k, null)
     const name = exe.replace(/\.exe$/i, '')
     if (!/^[\w .+-]{1,80}$/.test(name)) return null
-    const ps = `(Get-Process -Name '${name}' -ErrorAction SilentlyContinue | Select-Object -First 1).Path`
-    const p = (await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], 8000)).trim()
-    const icon = p ? await this._icon(p) : null
+    // Tek PowerShell çağrısı: sürecin yolu ve .exe'nin kendi simgesi
+    const r = await psIcon({ proc: name })
+    let icon = r.png ? this._pngToData(r.png) : null
+    if (!icon && r.path) icon = await this._icon(r.path)
     this.iconCache.set(k, icon)
     return icon
   }
