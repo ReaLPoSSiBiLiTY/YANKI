@@ -365,18 +365,30 @@ function openBotCard (id, anchor) {
   const b = m?.bots.find(x => x.id === id)
   const chans = (b?.channels || []).map(c => m.channels.find(x => x.id === c)).filter(Boolean)
   const align = anchor.closest('#members') ? 'left' : 'right'
-  openPopup(`
+  const playing = id === 'music' ? music?.state?.playing : null
+  const pop = openPopup(`
     <div class="pcard bot-pcard">
       <div class="pc-banner" style="background:linear-gradient(135deg, ${def.colors[0]}, ${def.colors[1]})"></div>
       <div class="pc-av">${botAvatar(id, 84)}</div>
       <div class="pc-body">
         <div class="pc-name">${def.name} <span class="tag-bot">BOT</span></div>
         <div class="pc-bio">${esc(def.desc)}</div>
+        ${id === 'music' ? `${playing ? `<h5>Şu an çalıyor</h5><div class="actline music">${icon('music', 13)}<span class="ellipsis">${esc(playing.video.title)}</span></div>` : ''}
+          <h5>Ses düzeyi (sende) <b class="vol-v" id="bc-vol-v">%${settings.musicVolume}</b></h5>
+          <div class="bc-vol">${icon('volumeLow', 16)}<input type="range" min="0" max="100" value="${settings.musicVolume}" id="bc-vol" title="Müzik Çalar'ın sesi yalnızca sende değişir">${icon('volume', 16)}</div>` : ''}
         ${def.commands.length ? `<h5>Komutlar</h5><div class="bot-cmds">${def.commands.map(([c, d]) => `<code>${esc(c)}</code><span class="muted small">${esc(d)}</span>`).join('')}</div>` : ''}
         <h5>Kanallar</h5><div class="pc-since">${chans.map(c => (c.kind === 'voice' ? '🔊 ' : '#') + esc(c.name)).join(', ') || '—'}</div>
         ${m?.isAdmin ? `<div class="pc-actions"><button class="btn small" data-act="bots-admin">${icon('settings', 15)} Botları yönet</button></div>` : ''}
       </div>
     </div>`, anchor, { align, cls: 'pcard-pop' })
+  $('#bc-vol', pop)?.addEventListener('input', (e) => {
+    const v = +e.target.value
+    $('#bc-vol-v', pop).textContent = '%' + v
+    music.setVolume(v)
+    const mp = $('#mp-vol'); if (mp) mp.value = v
+    saveSettingsSoon()
+  })
 }
+const saveSettingsSoon = debounce(() => saveSettings(), 400)
 
 window.BOT_DEFS = BOT_DEFS

@@ -1095,3 +1095,20 @@ body.a11y-contrast .msg-text { color: var(--text); }
 .gm-result { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 12px; background: rgba(255, 194, 75, .14); color: var(--yellow); font-size: 17px; }
 .gm-result span { color: #fff; }
 .gm-help { color: #a9a6c0; text-align: center; }
+
+/* ---------- 1.6.5 ---------- */
+.bc-vol { display: flex; align-items: center; gap: 8px; color: var(--text-3); }
+.bc-vol input { flex: 1; }
+.pip-src { position: fixed; left: -20px; top: 0; width: 4px; height: 4px; opacity: 0; pointer-events: none; }
+.tile-btn.on { background: var(--accent); color: #fff; }
+.ptt-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.ptt-key { min-width: 150px; justify-content: center; }
+.ptt-key.listening { border-color: var(--accent); color: var(--accent); animation: pulse 1.2s infinite; }
+.warn-text { color: #ff8a2a; }
+.db { position: relative; }
+.ptt-tag { position: absolute; right: 2px; bottom: 2px; font-style: normal; font-size: 8.5px; font-weight: 900; padding: 0 3px; border-radius: 4px; background: rgba(var(--fg-rgb), .14); color: var(--text-2); line-height: 13px; }
+.db.ptt { opacity: .75; }
+.db.ptt-live { opacity: 1; box-shadow: 0 0 0 2px var(--green) inset; }
+.db.ptt-live .ptt-tag { background: var(--green); color: #fff; }
+.mode-seg.two { grid-template-columns: repeat(2, 1fr); }
+@keyframes pulse { 50% { opacity: .55; } }

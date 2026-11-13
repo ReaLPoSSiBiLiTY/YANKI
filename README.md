@@ -46,6 +46,15 @@ Topluluğun yalnızca üyelerinin bilgisayarlarında yaşar; herkes birbirine do
   </tr>
 </table>
 
+## v1.6.5'te yenilikler
+
+- **Sesli duyuru:** Ses kanalına biri girince "Ayşe geldi." diye söylenir (isteğe bağlı: ayrılınca da). Bilgisayarın konuşma motoru kullanılır, ek dosya yoktur.
+- **Bas-Konuş:** Klavye tuşu ya da farenin orta/yan tuşu. Oyun öndeyken de çalışması için sistem geneli tuş dinleme ([uiohook-napi](https://github.com/SnosMe/uiohook-napi)) yalnızca Bas-Konuş açıkken başlatılır; macOS'ta Erişilebilirlik izni ister. Yüklenemezse tuş yalnızca YANKI öndeyken çalışır.
+- **Küçük pencere (PiP):** İzlenen yayın, oyuna geçince her zaman üstte kalan küçük pencerede devam eder (Ayarlar › Ekran Paylaşımı).
+- **Canlı kalite değişimi:** Yayını kapatmadan 1080p60 / 1080p30 / 720p60 / 720p30 / 480p arasında geçiş.
+- **Müzik Çalar ses düzeyi** botun profil kartında.
+- **Xbox / Game Pass oyunları** ve Unreal Engine oyunları "oynuyor" kısmında.
+
 ## v1.6'da yenilikler
 
 - **YANKI oyunları:** Futbol (Haxball tarzı, takımlı), Arena (2D nişancı) ve Yılan; sunucudaki arkadaşlarla doğrudan YANKI penceresinde. Oyunu kuran kişinin bilgisayarı oyunu yürütür, oyuncular yalnızca tuş durumlarını gönderir (P2P, sunucu yok). Oyun motoru yalnızca bir oyun açıldığında yüklenir.
@@ -119,8 +128,8 @@ npm run start:2   # aynı bilgisayarda ikinci bir kullanıcıyla denemek için
 ## Kurulum dosyası üretme
 
 ```bash
-npm run dist:win   # Windows'ta → dist/YANKI-1.6.0-win-x64.exe ve kurulumsuz .zip
-npm run dist:mac   # macOS'ta  → dist/YANKI-1.6.0-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
+npm run dist:win   # Windows'ta → dist/YANKI-1.6.5-win-x64.exe ve kurulumsuz .zip
+npm run dist:mac   # macOS'ta  → dist/YANKI-1.6.5-mac-arm64.dmg / mac-x64.dmg (+ güncelleme için .zip)
 ```
 
 İki platformu birden derlemek için `v1.2.0` gibi bir etiket gönder. `.github/workflows/build.yml` iki platformu derler, sürüm notlarını `renderer/changelog.js`'ten üretir ve Releases sayfasında yayınlar. Uygulamalar güncellemeyi bu sayfadan alır.

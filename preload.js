@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('yanki', {
   canCreateServer: () => inv('p2p:canCreate'),
   netStats: () => inv('net:stats'),
   setStatus: (s) => inv('status:set', s),
+  pttConfig: (cfg) => inv('ptt:config', cfg),
   getStatus: () => inv('status:get'),
   setZoom: (z) => { const n = Number(z); if (n >= 0.5 && n <= 2) webFrame.setZoomFactor(n) },
   setInVoice: (on) => snd('app:inVoice', on),

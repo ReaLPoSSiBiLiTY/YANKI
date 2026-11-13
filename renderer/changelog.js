@@ -3,6 +3,19 @@
 // (scripts/release-notes.js) bu listeden üretilir. Yeni sürümde en üste ekle.
 const CHANGELOG = [
   {
+    version: '1.6.5',
+    date: '2026-11-13',
+    title: 'Bas-Konuş, küçük pencere ve sesli duyurular',
+    items: [
+      { icon: 'volume', title: '"Ayşe geldi."', desc: 'Bulunduğun ses kanalına biri girince YANKI adını sesli söylüyor; oyundayken ya da sohbet ekranındayken kimin geldiğini anlarsın. İstersen ayrılanlar da söylenir (Ayarlar › Bildirimler).' },
+      { icon: 'keyboard', title: 'Bas-Konuş', desc: 'Ayarlar › Ses ve Görüntü › Konuşma kipi: bir tuşa ya da farenin yan tuşuna basılı tuttuğun sürece seni duyarlar. Oyun öndeyken de çalışır (macOS\'ta bir kerelik Erişilebilirlik izni gerekir). Bırakınca kapanma gecikmesi ve tık sesi ayarlanabilir.' },
+      { icon: 'pip', title: 'Yayını küçük pencerede izle', desc: 'İzlediğin yayın, oyuna geçince ekranın köşesinde her zaman üstte duran küçük bir pencerede oynamaya devam eder; YANKI\'ya dönünce kapanır. Yayın kutusundaki düğmeyle istediğin an da açabilirsin.' },
+      { icon: 'settings', title: 'Yayın kalitesini kapatmadan değiştir', desc: 'Yayındayken kutudaki ⚙ düğmesinden 1080p60, 1080p30, 720p60, 720p30 ya da 480p arasında geçiş yap; yayın kesilmez, izleyenler hiçbir şey yapmaz.' },
+      { icon: 'music', title: 'Müzik Çalar ses düzeyi', desc: 'Müzik Çalar\'ın profil kartından sesini ayarlayabilirsin (yalnızca sende değişir).' },
+      { icon: 'gamepad', title: 'Xbox / Game Pass oyunları', desc: 'Xbox uygulamasından (Game Pass) kurulan oyunlar ve Unreal Engine ile yapılmış pek çok oyun artık "oynuyor" olarak görünüyor.' }
+    ]
+  },
+  {
     version: '1.6.0',
     date: '2026-11-10',
     title: 'Oyunlar, durumlar ve rozetler',

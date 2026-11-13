@@ -5,7 +5,8 @@
  *   Spotify'ın pencere başlığı çalarken "Sanatçı - Şarkı" olur.
  * - macOS: `ps` ile süreçler; Spotify/Music için AppleScript (ilk seferde izin sorulur).
  * - Oyunlar: bilinen oyun listesi + Steam/Epic/GOG/Riot kurulum klasörlerinden otomatik tanıma
- *   + kullanıcının eklediği özel oyunlar.
+ *   + Xbox uygulaması / Game Pass oyunları (XboxGames klasörleri, açılışta bir kez taranır)
+ *   + Unreal Engine oyunlarının "-Win64-Shipping" süreç adları + kullanıcının eklediği özel oyunlar.
  * - Simge: kurulu uygulamanın kendi simgesi (app.getFileIcon).
  */
 const { execFile } = require('child_process')
@@ -31,7 +32,81 @@ const KNOWN = {
   'marvel-win64-shipping': 'Marvel Rivals', cities2: 'Cities: Skylines II', cities: 'Cities: Skylines',
   'cs2.app': 'Counter-Strike 2', 'football manager 2024': 'Football Manager 2024', fm: 'Football Manager',
   'the sims 4': 'The Sims 4', ts4_x64: 'The Sims 4', 'satisfactory-win64-shipping': 'Satisfactory',
-  'deeprockgalactic-win64-shipping': 'Deep Rock Galactic', 'brotato': 'Brotato', 'balatro': 'Balatro'
+  'deeprockgalactic-win64-shipping': 'Deep Rock Galactic', 'brotato': 'Brotato', 'balatro': 'Balatro',
+  // Xbox / Game Pass (PC) oyunlarının yaygın süreç adları
+  forzahorizon5: 'Forza Horizon 5', forzahorizon4: 'Forza Horizon 4', forzamotorsport: 'Forza Motorsport',
+  haloinfinite: 'Halo Infinite', mcclauncher: 'Halo: The Master Chief Collection', 'mcc-win64-shipping': 'Halo: The Master Chief Collection',
+  flightsimulator: 'Microsoft Flight Simulator', flightsimulator2024: 'Microsoft Flight Simulator 2024',
+  gears5: 'Gears 5', 'gearsofwar4': 'Gears of War 4', 'stateofdecay2-win64-shipping': 'State of Decay 2',
+  'maine-win64-shipping': 'Grounded', 'maine-wingdk-shipping': 'Grounded', 'hi-fi-rush': 'Hi-Fi RUSH',
+  relicardinal: 'Age of Empires IV', aoe2de_s: 'Age of Empires II: DE', aoe3de_s: 'Age of Empires III: DE', aomx: 'Age of Mythology: Retold',
+  thegreatcircle: 'Indiana Jones and the Great Circle', 'avowed-win64-shipping': 'Avowed', 'avowed-wingdk-shipping': 'Avowed',
+  'palworld-wingdk-shipping': 'Palworld', 'sotgame_wingdk': 'Sea of Thieves', 'pentiment': 'Pentiment',
+  'doomthedarkages': 'DOOM: The Dark Ages', 'doometernalx64vk': 'DOOM Eternal', 'outerworlds2-wingdk-shipping': 'The Outer Worlds 2',
+  'microsoft.minecraftuwp': 'Minecraft', 'minecraft.exe': 'Minecraft', 'ninjagaiden2black-wingdk-shipping': 'Ninja Gaiden 2 Black'
+}
+
+// "SomeGame-Win64-Shipping" / "SomeGame-WinGDK-Shipping" → "Some Game" (Unreal Engine oyunları)
+function unrealName (n) {
+  const m = n.match(/^(.+?)[-_](win64|wingdk|wingdk64)[-_]shipping$/i)
+  if (!m) return null
+  const base = m[1].replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z0-9])/g, '$1 $2').trim()
+  return base.length >= 2 ? base.replace(/\b\w/g, c => c.toUpperCase()) : null
+}
+
+// Xbox uygulaması/Game Pass oyunlarını bul: her sürücüdeki oyun kök klasörü (.GamingRoot dosyası
+// ya da varsayılan "XboxGames"), oradaki oyun klasörleri ve oyunların .exe adları.
+const XBOX_SKIP_EXE = /^(gamelaunchhelper|unins.*|.*crash.*|.*setup.*|.*redist.*|vc_?redist.*|dxsetup|ue4prereq.*|easyanticheat.*|.*launcher.*|.*helper|.*reporter.*|.*bootstrap.*)$/i
+function scanXboxGames () {
+  const fs = require('fs')
+  const map = new Map() // exe (küçük harf, .exe'siz) -> { name, file }
+  if (process.platform !== 'win32') return map
+  const roots = new Set()
+  for (const d of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
+    const drive = d + ':\\'
+    try {
+      const gr = fs.readFileSync(drive + '.GamingRoot')
+      // "RGBX" + sayı + UTF-16 klasör yolu
+      const rel = gr.subarray(8).toString('utf16le').replace(/\0+$/, '').replace(/[^\x20-\uffff]/g, '').trim()
+      if (rel) roots.add(path.isAbsolute(rel) ? rel : drive + rel)
+    } catch {}
+    try { if (fs.statSync(drive + 'XboxGames').isDirectory()) roots.add(drive + 'XboxGames') } catch {}
+  }
+  for (const root of roots) {
+    let games = []
+    try { games = fs.readdirSync(root, { withFileTypes: true }).filter(e => e.isDirectory() && !e.name.startsWith('.')).slice(0, 300) } catch { continue }
+    for (const g of games) {
+      const dir = path.join(root, g.name)
+      const content = fs.existsSync(path.join(dir, 'Content')) ? path.join(dir, 'Content') : dir
+      let name = g.name
+      const exes = new Set()
+      for (const cfg of ['MicrosoftGame.config', 'appxmanifest.xml', 'AppxManifest.xml']) {
+        try {
+          const x = fs.readFileSync(path.join(content, cfg), 'utf8')
+          const dn = x.match(/DefaultDisplayName="([^"]+)"/)?.[1] || x.match(/<DisplayName>([^<]+)<\/DisplayName>/)?.[1]
+          if (dn && !/^ms-resource:/i.test(dn)) name = dn.trim()
+          for (const m of x.matchAll(/<Executable[^>]*\sName="([^"]+)"|\sExecutable="([^"]+)"/g)) exes.add(m[1] || m[2])
+          break
+        } catch {}
+      }
+      // Yapılandırma yalnızca başlatıcıyı gösteriyorsa: üst iki seviyedeki .exe dosyaları
+      const walk = (d, depth) => {
+        let list = []
+        try { list = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
+        for (const e of list.slice(0, 200)) {
+          if (e.isFile() && /\.exe$/i.test(e.name)) exes.add(path.relative(content, path.join(d, e.name)))
+          else if (e.isDirectory() && depth < 2 && !/^(redist|_commonredist|support|tools|engine|installers?)$/i.test(e.name)) walk(path.join(d, e.name), depth + 1)
+        }
+      }
+      walk(content, 0)
+      for (const rel of exes) {
+        const base = path.basename(rel).replace(/\.exe$/i, '').toLowerCase()
+        if (!base || XBOX_SKIP_EXE.test(base) || map.has(base)) continue
+        map.set(base, { name: name.slice(0, 60), file: path.join(content, rel) })
+      }
+    }
+  }
+  return map
 }
 
 const IGNORE_DIRS = new Set(['steamworks shared', 'steamvr', 'steam controller configs', 'proton', 'steam linux runtime', 'launcher', 'directxredist', 'riot client', 'epic online services'])
@@ -64,6 +139,8 @@ class ActivityDetector {
     this.iconCache = new Map()
     this.timer = null
     this.busy = false
+    this.xbox = new Map()
+    this.xboxAt = 0
   }
 
   configure ({ enabled, custom } = {}) {
@@ -111,6 +188,10 @@ class ActivityDetector {
     const custom = this.custom.find(c => c.exe === n)
     if (custom) return custom.name
     if (KNOWN[n]) return KNOWN[n]
+    const xb = this.xbox.get(n)
+    if (xb) return xb.name
+    const ue = unrealName(n)
+    if (ue && !IGNORE_PROC.has(n)) return ue
     if ((n === 'javaw' || n === 'java') && /^Minecraft/i.test(title || '')) return 'Minecraft'
     return gameFromPath(file)
   }
@@ -131,6 +212,11 @@ class ActivityDetector {
   // Hafif Windows algılaması: PowerShell yerine tasklist + Steam kayıt defteri.
   // PowerShell yalnızca yeni bir oyun ilk kez görüldüğünde, simgesi için bir kez çalışır.
   async _pollWindows () {
+    // Xbox/Game Pass oyun listesi: açılışta ve 30 dakikada bir (yalnızca klasör adlarını okur)
+    if (Date.now() - this.xboxAt > 30 * 60000) {
+      this.xboxAt = Date.now()
+      try { this.xbox = scanXboxGames() } catch { this.xbox = new Map() }
+    }
     const out = await run('tasklist', ['/fo', 'csv', '/nh'], 6000)
     const names = new Set()
     for (const line of out.split(/\r?\n/)) {
@@ -139,7 +225,10 @@ class ActivityDetector {
     }
     for (const exe of names) {
       const game = this._matchGame(exe, null, '')
-      if (game) return { type: 'game', name: game, icon: await this._winIcon(exe), since: Date.now() }
+      if (game) {
+        const xb = this.xbox.get(exe.toLowerCase().replace(/\.exe$/, ''))
+        return { type: 'game', name: game, icon: xb ? await this._icon(xb.file) : await this._winIcon(exe), since: Date.now(), store: xb ? 'Xbox' : undefined }
+      }
     }
     const steam = await this._steamGame()
     if (steam) return { type: 'game', name: steam.name, icon: steam.icon, since: Date.now() }
@@ -238,4 +327,4 @@ class ActivityDetector {
   }
 }
 
-module.exports = { ActivityDetector, gameFromPath, KNOWN }
+module.exports = { ActivityDetector, gameFromPath, KNOWN, unrealName, scanXboxGames }

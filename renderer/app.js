@@ -64,6 +64,8 @@ async function init () {
   api.on(onEvent)
   voice.onStats = updateNetUI
   startStats()
+  hookAnnouncements()
+  applyPtt()
   bindStatic()
   bindMentions()
   bindMiniDM()
@@ -172,6 +174,9 @@ async function onEvent (ev) {
     case 'status':
       S.statuses.set(ev.from, ev.status)
       statusRedraw()
+      break
+    case 'ptt':
+      voice.setPttDown(!!ev.down)
       break
     case 'mystatus':
       S.myStatus = ev.status
@@ -641,7 +646,7 @@ function renderDock () {
   const muted = voice.muted || voice.deaf
   const musicOn = botEnabledIn(voice.server, voice.channel, 'music')
   d.innerHTML = `
-    <button class="db ${muted ? 'off' : ''}" data-act="mute" title="Mikrofon">${icon(muted ? 'micOff' : 'mic', 21)}</button>
+    <button class="db ${muted ? 'off' : ''} ${voice.ptt && !muted ? 'ptt' : ''} ${voice.ptt && voice.pttDown && !muted ? 'ptt-live' : ''}" data-act="mute" title="${voice.ptt ? `Bas-Konuş: ${esc(keyLabel(settings.ptt?.key))} tuşuna basılı tut` : 'Mikrofon'}">${icon(muted ? 'micOff' : 'mic', 21)}${voice.ptt && !muted ? '<i class="ptt-tag">BK</i>' : ''}</button>
     <button class="db ${voice.deaf ? 'off' : ''}" data-act="deafen" title="Kulaklık">${icon(voice.deaf ? 'headphonesOff' : 'headphones', 21)}</button>
     <span class="db-sep"></span>
     <button class="db ${voice.cam ? 'on' : ''}" data-act="camera" title="Kamera">${icon(voice.cam ? 'video' : 'videoOff', 21)}</button>
@@ -1073,6 +1078,8 @@ function tileButtons (t) {
     b += `<label class="tile-vol" title="Yayın sesi" data-key="${t.key}">${icon('volume', 15)}<input type="range" min="0" max="200" step="1" list="vol-ticks" data-stream-vol="${t.key}"><b class="vol-v"></b></label>`
     b += `<button class="tile-btn danger" data-act="unwatch" data-key="${t.key}" title="Yayını kapat">${icon('x', 15)}<span>Yayını Kapat</span></button>`
   }
+  if (t.kind === 'screen' && t.self) b += `<button class="tile-btn" data-act="screen-quality" title="Yayın kalitesi: ${esc(voice.screenQuality.label)} — değiştir (yayın kapanmaz)">${icon('settings', 15)}</button>`
+  if (t.kind === 'screen' && !t.self && t.watching) b += `<button class="tile-btn ${pipOn(t.key) ? 'on' : ''}" data-act="pip" data-key="${t.key}" title="Küçük pencerede izle (oyun oynarken üstte kalır)">${icon('pip', 15)}</button>`
   if (t.kind === 'screen' && t.self) b += `<button class="tile-btn" data-act="self-preview" title="${voice.selfPreview ? 'Önizlemeyi kapat (daha az kaynak)' : 'Önizlemeyi göster'}">${icon(voice.selfPreview ? 'eyeOff' : 'eye', 15)}</button>`
   if (t.kind !== 'avatar' && t.kind !== 'music' && (t.stream || t.self)) b += `<button class="tile-btn" data-act="tile-full" title="Tam ekran">${icon('maximize', 16)}</button>`
   return b
@@ -1704,10 +1711,12 @@ async function openSettings (tab = 'profile') {
           <label class="check"><input type="checkbox" id="av-ns" ${settings.noiseSuppression ? 'checked' : ''}> Gürültü bastırma</label>
           <label class="check"><input type="checkbox" id="av-ec" ${settings.echoCancellation ? 'checked' : ''}> Yankı engelleme</label>
           <label class="check"><input type="checkbox" id="av-ag" ${settings.autoGain ? 'checked' : ''}> Otomatik kazanç kontrolü</label>
+          <div id="ptt-box"></div>
           <h4>Görüntü</h4>
           <label>Kamera<select id="av-cam"><option value="">Varsayılan</option>${opts('videoinput', settings.cameraDevice)}</select></label>
           <div class="cam-test"><button class="btn small" id="av-camtest">Kamerayı önizle</button><video id="av-video" autoplay muted playsinline></video></div>
         </div>`
+      pttPane($('#ptt-box', pane))
       const persist = async (reMic) => { saveSettings(); if (reMic && voice.mic) await voice.setInputDevice().catch(() => toast('Aygıt değiştirilemedi')) }
       $('#av-in', pane).addEventListener('change', e => { settings.inputDevice = e.target.value; persist(true) })
       $('#av-out', pane).addEventListener('change', e => { settings.outputDevice = e.target.value; saveSettings(); voice.setOutputDevice() })
@@ -1742,7 +1751,16 @@ async function openSettings (tab = 'profile') {
     } else if (k === 'screen') {
       pane.innerHTML = `
         <div class="form">
-          <label>Varsayılan kalite<select id="sc-q">${Object.entries(SCREEN_QUALITY).map(([key, q]) => `<option value="${key}" ${settings.screenQuality === key ? 'selected' : ''}>${q.label} — en fazla ${(q.bitrate / 1e6).toFixed(0)} Mbps</option>`).join('')}</select></label>
+          <label>Varsayılan kalite<select id="sc-q">${Object.entries(SCREEN_QUALITY).map(([key, q]) => `<option value="${key}" ${settings.screenQuality === key ? 'selected' : ''}>${q.label} — en fazla ${+(q.bitrate / 1e6).toFixed(1)} Mbps</option>`).join('')}</select></label>
+          <p class="muted small">Yayın sürerken kaliteyi, yayın kutusundaki ⚙ düğmesinden kapatmadan değiştirebilirsin.</p>
+          <h4>Yayını küçük pencerede izle</h4>
+          <label>Kendiliğinden küçük pencere<select id="sc-pip">
+            <option value="game" ${(settings.pipAuto || 'game') === 'game' ? 'selected' : ''}>Oyun oynarken YANKI'dan çıkınca</option>
+            <option value="always" ${settings.pipAuto === 'always' ? 'selected' : ''}>YANKI'dan her çıktığımda</option>
+            <option value="off" ${settings.pipAuto === 'off' ? 'selected' : ''}>Kapalı (yalnızca düğmeyle)</option>
+          </select></label>
+          <p class="muted small">Bir yayını izlerken oyuna geçince yayın, ekranın köşesinde her zaman üstte duran küçük bir pencerede oynamaya devam eder; YANKI'ya dönünce kapanır. Oyun "tam ekran (özel)" kipindeyse küçük pencere oyunun altında kalabilir; "kenarlıksız pencere" kipini seç.</p>
+          <h4>Paylaşım</h4>
           <p class="muted small">Ekran paylaşımı eşler arası doğrudan gönderilir ve yalnızca "Yayını İzle" diyen kişilere gider; izleyen yoksa bilgisayarın kodlama yapmaz. Her izleyici için ayrı bir akış yüklenir: 1080p60'ta 3 izleyici ≈ 27 Mbps yükleme hızı gerektirir. Oyunda takılma olursa 1080p30 veya 720p seç. Mümkünse donanım hızlandırmalı H.264 kullanılır.</p>
           ${S.platform === 'win32' ? `
             <label class="check"><input type="checkbox" id="sc-audio" ${settings.screenAudio ? 'checked' : ''}> Tüm ekran paylaşılırken sistem sesini de paylaş</label>
@@ -1750,7 +1768,8 @@ async function openSettings (tab = 'profile') {
             <label class="check"><input type="checkbox" id="sc-echo" ${settings.allowEchoAudio ? 'checked' : ''}> Yankı koruması çalışmasa da sistem sesini paylaş (önerilmez)</label>`
           : '<p class="muted small">macOS: İlk paylaşımda Sistem Ayarları › Gizlilik ve Güvenlik › Ekran Kaydı izni gerekir. Sistem sesi paylaşımı macOS\'ta desteklenmez.</p>'}
         </div>`
-      $('#sc-q', pane).addEventListener('change', e => { settings.screenQuality = e.target.value; saveSettings() })
+      $('#sc-q', pane).addEventListener('change', e => { settings.screenQuality = e.target.value; saveSettings(); voice.setScreenQuality(e.target.value) })
+      $('#sc-pip', pane).addEventListener('change', e => { settings.pipAuto = e.target.value; saveSettings() })
       $('#sc-audio', pane)?.addEventListener('change', e => { settings.screenAudio = e.target.checked; saveSettings() })
       $('#sc-echo', pane)?.addEventListener('change', e => { settings.allowEchoAudio = e.target.checked; saveSettings() })
     } else if (k === 'notify') {
@@ -1763,12 +1782,22 @@ async function openSettings (tab = 'profile') {
           </select></label>
           <p class="muted small">Özel mesajlar ve arkadaşlık istekleri için "Kapalı" seçilmedikçe her zaman bildirim gelir.</p>
           <label class="check"><input type="checkbox" id="nt-sound" ${settings.sounds ? 'checked' : ''}> Mesaj sesi çal</label>
+          <h4>Sesli kanal duyuruları</h4>
+          <label class="check"><input type="checkbox" id="nt-join" ${settings.joinTts !== false ? 'checked' : ''}> Kanala biri girince adını sesli söyle ("Ayşe geldi.")</label>
+          <label class="check"><input type="checkbox" id="nt-leave" ${settings.leaveTts ? 'checked' : ''}> Biri ayrılınca da söyle ("Ayşe ayrıldı.")</label>
+          <label>Duyuru ses düzeyi: <b id="nt-tv">%${settings.ttsVolume ?? 80}</b><input type="range" min="10" max="100" step="5" value="${settings.ttsVolume ?? 80}" id="nt-tts"></label>
+          <div><button class="btn small" id="nt-try">${icon('volume', 14)} Dene</button></div>
+          <p class="muted small">Duyurular bilgisayarının konuşma sesiyle okunur; oyundayken ya da sohbet ekranındayken kimin geldiğini anlarsın. Türkçe ses yüklü değilse ${S.platform === 'darwin' ? 'Sistem Ayarları › Erişilebilirlik › Seslendirilen İçerik' : 'Ayarlar › Saat ve dil › Konuşma'} bölümünden Türkçe bir ses ekleyebilirsin.</p>
           <h4>Pencere</h4>
           <label class="check"><input type="checkbox" id="nt-tray" ${settings.closeToTray !== false ? 'checked' : ''}> Pencereyi kapatınca YANKI arka planda çalışmaya devam etsin</label>
           <p class="muted small">${S.platform === 'darwin' ? 'Tamamen kapatmak için menü çubuğundaki YANKI simgesinden "Çıkış"ı seç ya da ⌘Q kullan.' : 'YANKI görev çubuğunun sağındaki simgelere iner. Tamamen kapatmak için oradaki YANKI simgesine sağ tıklayıp "Çıkış"ı seç.'}</p>
         </div>`
       $('#nt-mode', pane).addEventListener('change', e => { settings.notify = e.target.value; saveSettings() })
       $('#nt-sound', pane).addEventListener('change', e => { settings.sounds = e.target.checked; saveSettings() })
+      $('#nt-join', pane).addEventListener('change', e => { settings.joinTts = e.target.checked; saveSettings() })
+      $('#nt-leave', pane).addEventListener('change', e => { settings.leaveTts = e.target.checked; saveSettings() })
+      $('#nt-tts', pane).addEventListener('input', e => { settings.ttsVolume = +e.target.value; $('#nt-tv', pane).textContent = '%' + e.target.value; saveSettings() })
+      $('#nt-try', pane).addEventListener('click', () => say(`${(S.profile.name || 'Ben').replace(/[^\p{L}\p{N}\s'.-]/gu, ' ').trim() || 'Biri'} geldi.`))
       $('#nt-tray', pane).addEventListener('change', e => { settings.closeToTray = e.target.checked; saveSettings(); api.setCloseToTray?.(settings.closeToTray) })
     } else if (k === 'a11y') {
       a11yPane(pane)
@@ -2030,6 +2059,8 @@ async function onClick (e) {
     case 'bots-admin': closePopup(); openBotsModal(); break
     case 'my-profile': statusMenu(a); break
     case 'games': openGames(); break
+    case 'screen-quality': screenQualityMenu(a); break
+    case 'pip': togglePip(a.dataset.key); break
     case 'settings': openSettings('profile'); break
     case 'toggle-members': S.showMembers = !S.showMembers; save('showMembers', S.showMembers); renderLayout(); renderMembers(); renderHeader(); break
     case 'toggle-view':

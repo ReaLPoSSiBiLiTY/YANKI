@@ -1,6 +1,8 @@
 'use strict'
 // Basit çizgi ikonları (24x24, stroke). icon('mic', 18)
 const ICON_PATHS = {
+  pip: '<rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="8" height="7" rx="1"/>',
+  keyboard: '<rect x="2" y="6" width="20" height="13" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 15h6"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   a11y: '<circle cx="12" cy="4.5" r="2"/><path d="M4 8.5 12 10l8-1.5M12 10v5l-3 6M12 15l3 6"/>',

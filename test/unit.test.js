@@ -29,4 +29,24 @@ assert.ok(!('evil' in pr.stats) && !(pr.stats.dice > 0))
 assert.ok(pr.stats.streak < 1e12)
 assert.strictEqual(sanitizeProfile({ name: 'x', ver: '<b>1.6</b>' }, 1).ver, null)
 
+// Oyun algılama: Unreal süreç adları ve Xbox/Game Pass
+const { unrealName, ActivityDetector } = require('../src/activity')
+assert.strictEqual(unrealName('Hogwarts_Legacy-Win64-Shipping'), 'Hogwarts Legacy')
+assert.strictEqual(unrealName('palworld-wingdk-shipping'), 'Palworld')
+assert.strictEqual(unrealName('notepad'), null)
+const det = new ActivityDetector({}, () => {})
+det.xbox.set('somegame', { name: 'Bir Game Pass Oyunu', file: 'x' })
+assert.strictEqual(det._matchGame('SomeGame.exe'), 'Bir Game Pass Oyunu')
+assert.strictEqual(det._matchGame('ForzaHorizon5.exe'), 'Forza Horizon 5')
+
+// Bas-Konuş: kapalıyken hiçbir şey başlatılmaz, bilinmeyen tuş reddedilir
+const { PushToTalk, CODES } = require('../src/ptt')
+const events = []
+const ptt = new PushToTalk(e => events.push(e), null)
+assert.deepStrictEqual(ptt.configure({ on: false }), { ok: true, global: false })
+assert.strictEqual(ptt.configure({ on: true, key: { t: 'key', code: 'Nope' } }).reason, 'key')
+assert.ok(CODES.CapsLock && CODES.KeyV && CODES.Backquote)
+assert.strictEqual(ptt.configure({ on: true, key: { t: 'mouse', b: 0 } }).reason, 'key') // sol tık atanamaz
+ptt.stop()
+
 console.log('✓ Birim testleri geçti')

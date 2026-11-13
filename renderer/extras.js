@@ -1291,4 +1291,189 @@ function openGames () {
   })
 }
 
-Object.assign(window, { onGameEph, lobbiesIn, openGames, loadGames, STATUS, statusOf, isDnd, setMyStatus, statusMenu, startStats, noteSent, bump, publishStats, badgesHTML, versionHTML, fmtDur, sinceHTML, applyA11y, a11yPane, verCmp, postponeUpdate, onUpdateReady, installUpdate, updBanner, fmtRate, netLine, openNetStats, refreshNetStats, stageFiles, stagedFilesHTML, takeStagedFiles, filesHTML, updateFileCards, downloadFileFrom, onFileProgress, openLink, fmtSize, GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })
+// =====================================================================
+// 1.6.5: Kanala gelenleri sesli duyur
+// =====================================================================
+let trVoice = null
+function pickVoice () {
+  try {
+    const vs = speechSynthesis.getVoices()
+    trVoice = vs.find(v => /^tr/i.test(v.lang) && v.localService) || vs.find(v => /^tr/i.test(v.lang)) || null
+  } catch {}
+}
+if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.addEventListener?.('voiceschanged', pickVoice) }
+
+// Konuşma motorunun okuyamayacağı simgeleri at (emoji, süs karakterleri)
+const spokenName = (key) => (nameOf(key) || '').replace(/[^\p{L}\p{N}\s'.-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 40) || 'Biri'
+
+function say (text) {
+  if (!('speechSynthesis' in window)) return
+  try {
+    const u = new SpeechSynthesisUtterance(text)
+    u.lang = 'tr-TR'
+    if (trVoice) u.voice = trVoice
+    u.rate = 1.05
+    u.volume = Math.max(0, Math.min(1, (settings.ttsVolume ?? 80) / 100))
+    // Aynı anda çok kişi girerse kuyruk uzamasın
+    if (speechSynthesis.pending) speechSynthesis.cancel()
+    speechSynthesis.speak(u)
+  } catch {}
+}
+
+function hookAnnouncements () {
+  voice.onJoin = (key) => {
+    if (settings.joinTts === false || voice.deaf) return
+    setTimeout(() => say(`${spokenName(key)} geldi.`), 300) // önce giriş sesi çalsın
+  }
+  voice.onLeave = (key) => {
+    if (!settings.leaveTts || voice.deaf) return
+    setTimeout(() => say(`${spokenName(key)} ayrıldı.`), 300)
+  }
+}
+
+// =====================================================================
+// 1.6.5: Yayını küçük pencerede izle (Picture-in-Picture)
+// =====================================================================
+let pipEl = null
+let pipKey = null
+let pipAuto = false
+function pipVideo () {
+  if (pipEl) return pipEl
+  pipEl = document.createElement('video')
+  pipEl.muted = true // ses, yayının kendi ses öğesinden gelir
+  pipEl.playsInline = true
+  pipEl.autoplay = true
+  pipEl.className = 'pip-src'
+  document.body.appendChild(pipEl)
+  pipEl.addEventListener('leavepictureinpicture', () => { pipKey = null; pipAuto = false; pipEl.srcObject = null; drawVoice() })
+  return pipEl
+}
+const streamOfKey = (key) => voice.tiles().find(t => t.kind === 'screen' && t.key === key && !t.self && t.stream)?.stream || null
+
+async function startPip (key, auto = false) {
+  const st = streamOfKey(key)
+  if (!st || !document.pictureInPictureEnabled) return false
+  const v = pipVideo()
+  if (v.srcObject !== st) v.srcObject = st
+  v.play().catch(() => {})
+  if (v.readyState < 1) await new Promise(r => { v.addEventListener('loadedmetadata', r, { once: true }); setTimeout(r, 1500) })
+  await v.requestPictureInPicture()
+  pipKey = key
+  pipAuto = auto
+  drawVoice()
+  return true
+}
+async function stopPip () {
+  pipAuto = false
+  if (document.pictureInPictureElement) await document.exitPictureInPicture().catch(() => {})
+}
+function togglePip (key) {
+  if (pipKey === key && document.pictureInPictureElement) return stopPip()
+  startPip(key).catch(() => toast('Küçük pencere açılamadı.'))
+}
+const pipOn = (key) => pipKey === key && !!document.pictureInPictureElement
+
+// Pencereden çıkılınca kendiliğinden aç; geri dönülünce kapat (main.js çağırır)
+window.autoPip = (away) => {
+  if (!away) { if (pipAuto) stopPip(); return }
+  const mode = settings.pipAuto || 'game'
+  if (mode === 'off' || pipKey || !voice?.active) return
+  if (mode === 'game' && activityOf(S.me)?.type !== 'game') return
+  const key = [...voice.watching].find(k => streamOfKey(k))
+  if (key) startPip(key, true).catch(() => {})
+}
+// Yayın bitince boş kalan küçük pencereyi kapat
+setInterval(() => { if (pipKey && !streamOfKey(pipKey)) stopPip() }, 2000)
+
+// =====================================================================
+// 1.6.5: Yayın kalitesini yayın sürerken değiştir
+// =====================================================================
+function screenQualityMenu (anchor) {
+  const cur = Object.entries(SCREEN_QUALITY).find(([, q]) => q === voice.screenQuality)?.[0]
+  menu(Object.entries(SCREEN_QUALITY).map(([k, q]) => ({
+    label: `${esc(q.label)} <small class="muted">· en fazla ${+(q.bitrate / 1e6).toFixed(1)} Mbps</small>`,
+    icon: k === cur ? 'check' : null,
+    onClick: async () => {
+      settings.screenQuality = k
+      saveSettings()
+      if (await voice.setScreenQuality(k)) toast(`Yayın kalitesi: ${q.label}`, 1800)
+    }
+  })), anchor, { align: 'above' })
+}
+
+// =====================================================================
+// 1.6.5: Bas-Konuş
+// =====================================================================
+const MOUSE_LABEL = { 1: 'Orta tık', 3: 'Fare geri tuşu', 4: 'Fare ileri tuşu' }
+function keyLabel (k) {
+  if (!k) return 'Atanmadı'
+  if (k.t === 'mouse') return MOUSE_LABEL[k.b] || 'Fare tuşu'
+  const c = k.code || ''
+  const names = { CapsLock: 'Caps Lock', Space: 'Boşluk', Backquote: '"', ControlLeft: 'Sol Ctrl', ControlRight: 'Sağ Ctrl', ShiftLeft: 'Sol Shift', ShiftRight: 'Sağ Shift', AltLeft: 'Sol Alt', AltRight: 'Sağ Alt (AltGr)', MetaLeft: S.platform === 'darwin' ? 'Sol ⌘' : 'Sol Win', Tab: 'Tab', Enter: 'Enter' }
+  return names[c] || c.replace(/^Key/, '').replace(/^Digit/, '').replace(/^Numpad/, 'Num ').replace(/^Arrow/, 'Ok ')
+}
+
+S.pttGlobal = false
+S.pttError = null
+async function applyPtt () {
+  const p = settings.ptt || {}
+  voice.setPtt(!!p.on)
+  S.pttGlobal = false
+  S.pttError = null
+  try {
+    const r = await api.pttConfig?.({ on: !!p.on, key: p.key || null })
+    if (r) { S.pttGlobal = !!r.global; if (p.on && !r.ok) S.pttError = r.reason }
+  } catch {}
+  drawVoice()
+}
+
+// Pencere öndeyken tuşu doğrudan da dinle (sistem geneli dinleme yoksa tek yol budur)
+const pttMatch = (e) => {
+  const k = settings.ptt?.key
+  if (!settings.ptt?.on || !k) return false
+  return e.type.startsWith('mouse') ? k.t === 'mouse' && e.button === k.b : k.t !== 'mouse' && e.code === k.code
+}
+for (const ev of ['keydown', 'keyup', 'mousedown', 'mouseup']) {
+  window.addEventListener(ev, (e) => { if (!S.pttBinding && pttMatch(e)) voice.setPttDown(ev.endsWith('down')) }, true)
+}
+window.addEventListener('blur', () => { if (!S.pttGlobal) voice?.setPttDown(false) })
+
+function pttPane (box) {
+  const p = settings.ptt || {}
+  const err = { 'mac-access': 'Oyun ya da başka bir uygulama öndeyken de çalışması için: Sistem Ayarları › Gizlilik ve Güvenlik › Erişilebilirlik › YANKI\'yı aç, sonra YANKI\'yı yeniden başlat. O zamana kadar tuş yalnızca YANKI öndeyken çalışır.', unavailable: 'Bu sistemde tuş, yalnızca YANKI penceresi öndeyken algılanabiliyor.', key: 'Bu tuş sistem genelinde dinlenemiyor; başka bir tuş seç.' }[S.pttError]
+  box.innerHTML = `
+    <h4>Konuşma kipi</h4>
+    <div class="mode-seg two"><button class="${p.on ? '' : 'on'}" data-ptt="0">${icon('mic', 15)} Ses etkinliği</button><button class="${p.on ? 'on' : ''}" data-ptt="1">${icon('keyboard', 15)} Bas-Konuş</button></div>
+    ${p.on ? `
+      <div class="ptt-row"><span>Konuşma tuşu</span><button class="btn small ptt-key" id="ptt-bind">${icon('keyboard', 14)} ${esc(keyLabel(p.key))}</button></div>
+      <p class="muted small">${S.pttGlobal ? 'Tuş, oyun ya da başka bir uygulama öndeyken de çalışır.' : ''} Tuşa basılı tuttuğun sürece seni duyarlar.</p>
+      ${err ? `<p class="small warn-text">${esc(err)}</p>` : ''}
+      <label>Bırakınca kapanma gecikmesi: <b id="ptt-dl">${p.delay ?? 200} ms</b><input type="range" min="0" max="1000" step="20" value="${p.delay ?? 200}" id="ptt-delay"></label>
+      <label class="check"><input type="checkbox" id="ptt-snd" ${p.sound !== false ? 'checked' : ''}> Basınca ve bırakınca kısa bir tık sesi çal</label>` : '<p class="muted small">Mikrofonun açıkken konuştuğun her şey iletilir.</p>'}`
+  const save = () => { settings.ptt = p; settings.pttDelay = p.delay ?? 200; settings.pttSound = p.sound !== false; saveSettings() }
+  $$('[data-ptt]', box).forEach(b => b.addEventListener('click', async () => {
+    p.on = b.dataset.ptt === '1'
+    if (p.on && !p.key) p.key = { t: 'key', code: S.platform === 'darwin' ? 'Backquote' : 'CapsLock' }
+    save(); await applyPtt(); pttPane(box)
+  }))
+  $('#ptt-delay', box)?.addEventListener('input', e => { p.delay = +e.target.value; $('#ptt-dl', box).textContent = p.delay + ' ms'; save() })
+  $('#ptt-snd', box)?.addEventListener('change', e => { p.sound = e.target.checked; save() })
+  $('#ptt-bind', box)?.addEventListener('click', (e) => {
+    const btn = e.currentTarget
+    btn.textContent = 'Bir tuşa ya da farenin yan tuşuna bas… (Esc: vazgeç)'
+    btn.classList.add('listening')
+    S.pttBinding = true
+    const done = async (key) => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('mousedown', onMouse, true)
+      S.pttBinding = false
+      if (key) { p.key = key; save(); await applyPtt() }
+      pttPane(box)
+    }
+    const onKey = (ev) => { ev.preventDefault(); ev.stopPropagation(); done(ev.code === 'Escape' ? null : { t: 'key', code: ev.code }) }
+    const onMouse = (ev) => { if (ev.button === 0 || ev.button === 2) return; ev.preventDefault(); done({ t: 'mouse', b: ev.button }) }
+    setTimeout(() => { window.addEventListener('keydown', onKey, true); window.addEventListener('mousedown', onMouse, true) }, 50)
+  })
+}
+
+Object.assign(window, { say, hookAnnouncements, startPip, stopPip, togglePip, pipOn, screenQualityMenu, applyPtt, pttPane, keyLabel, onGameEph, lobbiesIn, openGames, loadGames, STATUS, statusOf, isDnd, setMyStatus, statusMenu, startStats, noteSent, bump, publishStats, badgesHTML, versionHTML, fmtDur, sinceHTML, applyA11y, a11yPane, verCmp, postponeUpdate, onUpdateReady, installUpdate, updBanner, fmtRate, netLine, openNetStats, refreshNetStats, stageFiles, stagedFilesHTML, takeStagedFiles, filesHTML, updateFileCards, downloadFileFrom, onFileProgress, openLink, fmtSize, GROUP_ICONS, groupBadges, INVITE_REASONS, errText, openInviteModal, renderLock, plainText, mentionsToNames, namesToMentions, mentionMap, renderMentionHints, closeMentions, bindMentions, addMention, clearMention, mentionCount, serverMentions, canPoll, openPollCreator, startDM, openMiniDM, closeMiniDM, bindMiniDM, miniOnDM, loadMini, groupChip, groupById, openGroupsModal, groupMenu, voiceAllowed, onUpdateAvailable, updateProgress, openUpdateModal, checkForUpdates, showWhatsNew, maybeShowWhatsNew })

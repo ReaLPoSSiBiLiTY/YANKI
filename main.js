@@ -4,6 +4,7 @@ const path = require('path')
 const fs = require('fs')
 const { P2PNode } = require('./src/p2p/node')
 const { ActivityDetector } = require('./src/activity')
+const { PushToTalk } = require('./src/ptt')
 const { Updater } = require('./src/updater')
 const UPDATE_REPO = (require('./package.json').yanki || {}).updateRepo || 'ReaLPoSSiBiLiTY/YANKI'
 
@@ -49,6 +50,7 @@ let tray = null
 let closeToTray = true // arayüz ayarından gelir
 let trayHintShown = false
 let quitting = false
+let ptt = null
 
 // Pencereyi kapatınca uygulama görev çubuğunun sağındaki simgeye (macOS'ta menü çubuğuna) iner;
 // tamamen kapatmak için simgeye sağ tıklayıp "Çıkış" seçilir.
@@ -137,6 +139,13 @@ function createWindow () {
     if (/^https?:\/\//i.test(url)) send({ type: 'open-link', url })
   })
   win.on('focus', () => send({ type: 'focus' }))
+  // Yayın izlerken pencereden çıkılınca (ör. oyuna geçince) küçük pencere (PiP) açılabilsin.
+  // Tarayıcı PiP'i yalnızca bir kullanıcı hareketiyle açtığından çağrı "kullanıcı hareketi" sayılır.
+  const autoPip = (away) => { if (win && !win.isDestroyed()) win.webContents.executeJavaScript(`window.autoPip && window.autoPip(${away})`, true).catch(() => {}) }
+  win.on('blur', () => autoPip(true))
+  win.on('minimize', () => autoPip(true))
+  win.on('hide', () => autoPip(true))
+  win.on('focus', () => autoPip(false))
   win.on('close', (e) => {
     if (quitting || !closeToTray) return
     e.preventDefault()
@@ -192,6 +201,10 @@ function registerIpc () {
   h('p2p:canCreate', () => node.canCreateServer())
   h('net:stats', () => node.netStats())
   h('status:set', (s) => node.setStatus(s))
+  h('ptt:config', (cfg) => {
+    if (!ptt) ptt = new PushToTalk(send, systemPreferences)
+    return ptt.configure(cfg && typeof cfg === 'object' ? { on: !!cfg.on, key: cfg.key && typeof cfg.key === 'object' ? { t: cfg.key.t === 'mouse' ? 'mouse' : 'key', code: String(cfg.key.code || '').slice(0, 30), b: Number(cfg.key.b) } : null } : {})
+  })
   h('status:get', () => node.status)
   // Sesli kanalda değilken pencere gizlenince zamanlayıcılar yavaşlasın (daha az işlemci)
   ipcMain.on('app:inVoice', (_e, on) => { try { win?.webContents.setBackgroundThrottling(!on) } catch {} })
@@ -488,6 +501,7 @@ app.on('before-quit', async (e) => {
   e.preventDefault()
   shuttingDown = true
   activity?.stop()
+  ptt?.stop()
   try { await Promise.race([node.destroy(), new Promise(r => setTimeout(r, 1500))]) } catch {}
   app.quit()
 })

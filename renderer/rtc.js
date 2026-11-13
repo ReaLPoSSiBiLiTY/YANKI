@@ -19,7 +19,9 @@
 const SCREEN_QUALITY = {
   '1080p60': { w: 1920, h: 1080, fps: 60, bitrate: 9_000_000, label: '1080p · 60 FPS' },
   '1080p30': { w: 1920, h: 1080, fps: 30, bitrate: 6_000_000, label: '1080p · 30 FPS' },
-  '720p30': { w: 1280, h: 720, fps: 30, bitrate: 3_000_000, label: '720p · 30 FPS' }
+  '720p60': { w: 1280, h: 720, fps: 60, bitrate: 5_000_000, label: '720p · 60 FPS' },
+  '720p30': { w: 1280, h: 720, fps: 30, bitrate: 3_000_000, label: '720p · 30 FPS' },
+  '480p30': { w: 854, h: 480, fps: 30, bitrate: 1_500_000, label: '480p · 30 FPS (zayıf bağlantı)' }
 }
 
 const rid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
@@ -42,6 +44,8 @@ class Voice {
     this.screen = null
     this.screenQuality = SCREEN_QUALITY['1080p30']
     this.muted = false
+    this.ptt = false // Bas-Konuş kipi
+    this.pttDown = false
     this.deaf = false
     this.peers = new Map()
     this.watchers = new Set() // yayınımı izleyenler
@@ -216,10 +220,11 @@ class Voice {
       if (p && st.sess && p.remoteSess && p.remoteSess !== st.sess) this._closePeer(from)
       const isNew = !this.peers.has(from)
       this._ensurePeer(from, st.sess)
-      if (isNew && (!prev || prev.channel !== st.channel || prev.sess !== st.sess)) this._sound('join')
+      if (isNew && (!prev || prev.channel !== st.channel || prev.sess !== st.sess)) { this._sound('join'); this.onJoin?.(from) }
     } else if (this.peers.has(from)) {
       this._closePeer(from)
       this._sound('leave')
+      this.onLeave?.(from)
     }
     if ((!st || !st.screen) && this.watching.delete(from)) { this._endTimer('watched', this.watchAt.get(from)); this.watchAt.delete(from) }
     const significant = !prev || !st || prev.channel !== st.channel || prev.muted !== st.muted || prev.deaf !== st.deaf || prev.cam !== st.cam || prev.screen !== st.screen || String(prev.watchers || []) !== String(st.watchers || []) || String(prev.watching || []) !== String(st.watching || [])
@@ -533,9 +538,40 @@ class Voice {
 
   // ---------- Mikrofon / kulaklık ----------
 
+  // Mikrofon şu an gerçekten kapalı mı (susturma, sağırlaştırma ya da Bas-Konuş'ta tuş bırakılmış)
+  get micOff () { return this.muted || this.deaf || (this.ptt && !this.pttDown) }
+
   _applyMute () {
-    const off = this.muted || this.deaf
+    const off = this.micOff
     this.mic?.getAudioTracks().forEach(t => { t.enabled = !off })
+  }
+
+  setPtt (on) {
+    this.ptt = !!on
+    this.pttDown = false
+    clearTimeout(this._pttRelease)
+    this._applyMute()
+    this.onUpdate()
+  }
+
+  // Bas-Konuş tuşu: basınca hemen açılır, bırakınca son hece kesilmesin diye kısa bir gecikmeyle kapanır
+  setPttDown (down) {
+    if (!this.ptt) return
+    clearTimeout(this._pttRelease)
+    if (down) {
+      if (this.pttDown) return
+      this.pttDown = true
+      this._applyMute()
+      if (this.channel && !this.muted && !this.deaf && this.settings().pttSound !== false) this._sound('ptt-on')
+      this.onUpdate()
+    } else if (this.pttDown) {
+      this._pttRelease = setTimeout(() => {
+        this.pttDown = false
+        this._applyMute()
+        if (this.channel && !this.muted && !this.deaf && this.settings().pttSound !== false) this._sound('ptt-off')
+        this.onUpdate()
+      }, this.settings().pttDelay ?? 200)
+    }
   }
 
   toggleMute () {
@@ -691,7 +727,7 @@ class Voice {
       let sum = 0
       for (let i = 0; i < a.buf.length; i++) { const v = (a.buf[i] - 128) / 128; sum += v * v }
       const rms = Math.sqrt(sum / a.buf.length)
-      const silenced = key === this.me ? (this.muted || this.deaf) : (this.states.get(key)?.muted)
+      const silenced = key === this.me ? this.micOff : (this.states.get(key)?.muted)
       if (rms > 0.035 && !silenced) a.hold = 3; else if (a.hold > 0) a.hold--
       const on = a.hold > 0
       if (on !== this.speaking.has(key)) {
@@ -777,6 +813,24 @@ class Voice {
     this.onUpdate()
   }
 
+  // Yayını kapatmadan kaliteyi değiştir: yakalama kısıtları ve kodlayıcı ayarları yerinde güncellenir
+  async setScreenQuality (qualityKey) {
+    const q = SCREEN_QUALITY[qualityKey]
+    if (!this.screen || !q) return false
+    const vt = this.screen.getVideoTracks()[0]
+    this.screenQuality = q
+    try {
+      await vt.applyConstraints({ width: { ideal: q.w, max: q.w }, height: { ideal: q.h, max: q.h }, frameRate: { ideal: q.fps, max: q.fps } })
+    } catch {
+      // Eski yöntemle alınan görüntüde kısıt değişmezse kodlayıcı tarafında küçült
+    }
+    vt.contentHint = q.fps >= 60 ? 'motion' : 'detail'
+    for (const p of this.peers.values()) for (const sd of p.pc.getSenders()) if (sd.track === vt) this._tuneScreenSender(sd, null, true)
+    this._broadcast()
+    this.onUpdate()
+    return true
+  }
+
   stopScreen (silent) {
     if (!this.screen) return
     this._removeStreamFromPeers(this.screen)
@@ -788,7 +842,7 @@ class Voice {
     if (!silent) { this._broadcast(); this.onUpdate() }
   }
 
-  _tuneScreenSender (sender, pc) {
+  _tuneScreenSender (sender, pc, quick) {
     // Donanım hızlandırmalı H.264'ü öne al: yazılım VP8 kodlaması yayıncının işlemcisini
     // (ve oyununu) yoruyordu.
     try {
@@ -806,7 +860,9 @@ class Voice {
         if (!prm.encodings || !prm.encodings.length) return
         prm.encodings[0].maxBitrate = q.bitrate
         prm.encodings[0].maxFramerate = q.fps
-        prm.encodings[0].scaleResolutionDownBy = 1
+        // Yakalanan görüntü istenenden büyükse (eski yöntem) kodlayıcıda küçült
+        const st = sender.track?.getSettings?.() || {}
+        prm.encodings[0].scaleResolutionDownBy = st.height > q.h * 1.05 ? Math.min(4, st.height / q.h) : 1
         prm.encodings[0].priority = 'high'
         prm.encodings[0].networkPriority = 'high'
         prm.degradationPreference = q.fps >= 60 ? 'maintain-framerate' : 'maintain-resolution'
@@ -814,6 +870,7 @@ class Voice {
       } catch {}
     }
     apply()
+    if (quick) return
     setTimeout(apply, 1500)
     setTimeout(apply, 5000)
   }
@@ -919,7 +976,8 @@ class Voice {
     try {
       if (!this.ctx) this.ctx = new AudioContext()
       const ctx = this.ctx
-      const notes = { join: [523, 784], leave: [784, 523], mute: [440, 330], unmute: [330, 440], message: [880], friend: [660, 880, 1046] }[kind] || [600]
+      const notes = { join: [523, 784], leave: [784, 523], mute: [440, 330], unmute: [330, 440], message: [880], friend: [660, 880, 1046], 'ptt-on': [1200], 'ptt-off': [900] }[kind] || [600]
+      const vol = kind.startsWith('ptt') ? 0.03 : 0.08
       notes.forEach((f, i) => {
         const o = ctx.createOscillator()
         const g = ctx.createGain()
@@ -927,8 +985,8 @@ class Voice {
         o.frequency.value = f
         const t = ctx.currentTime + i * 0.09
         g.gain.setValueAtTime(0.0001, t)
-        g.gain.exponentialRampToValueAtTime(0.08, t + 0.015)
-        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16)
+        g.gain.exponentialRampToValueAtTime(vol, t + 0.015)
+        g.gain.exponentialRampToValueAtTime(0.0001, t + (kind.startsWith('ptt') ? 0.06 : 0.16))
         o.connect(g).connect(ctx.destination)
         o.start(t)
         o.stop(t + 0.18)

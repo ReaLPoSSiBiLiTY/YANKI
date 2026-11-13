@@ -50,7 +50,7 @@ class AudioRelay {
       proc.onaudioprocess = (e) => {
         const data = e.inputBuffer.getChannelData(0)
         const dur = data.length / RELAY_RATE * 1e6
-        if (this.v.muted || this.v.deaf || !this.targets.size || enc.state !== 'configured') { ts += dur; return }
+        if (this.v.micOff || !this.targets.size || enc.state !== 'configured') { ts += dur; return }
         const ad = new AudioData({ format: 'f32-planar', sampleRate: RELAY_RATE, numberOfFrames: data.length, numberOfChannels: 1, timestamp: ts, data: new Float32Array(data) })
         ts += dur
         try { enc.encode(ad) } catch {}
